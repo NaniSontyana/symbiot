@@ -35,7 +35,7 @@ export function setupCopilotWebSocket(server) {
           ws.send(JSON.stringify({ type: 'start_generating' }));
 
           // 1. Fetch Database RAG Context
-          const dbContext = await getSessionContext(userId || 'demo-user', questionText);
+          const dbContext = await getSessionContext(userId || 'demo-candidate-123', questionText, apiKey);
           const fullContext = [dbContext, resumeContext ? `[CLIENT RESUME]: ${resumeContext}` : '']
             .filter(Boolean)
             .join('\n\n');

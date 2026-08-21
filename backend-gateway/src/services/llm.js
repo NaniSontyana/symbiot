@@ -1,33 +1,30 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import pool from '../config/db.js';
+import { searchVectorChunks } from './embedding.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 /**
- * RAG Context Retrieval: Fetch matching resume/job description chunks for user session
+ * RAG Context Retrieval: Fetch vector similarity matching resume/job description chunks
  */
-export async function getSessionContext(userId, queryText) {
+export async function getSessionContext(userId, queryText, customApiKey = null) {
   try {
-    const result = await pool.query(
-      `SELECT chunk_text, doc_type FROM documents 
-       WHERE user_id = $1 
-       LIMIT 6`,
-      [userId]
-    );
+    const vectorChunks = await searchVectorChunks(userId, queryText, customApiKey, 5);
 
-    if (result.rows.length === 0) {
+    if (!vectorChunks || vectorChunks.length === 0) {
       return '';
     }
 
-    return result.rows
-      .map((row) => `[${row.doc_type.toUpperCase()} CHUNK]: ${row.chunk_text}`)
-      .join('\n');
+    return vectorChunks
+      .map((item) => `[${item.docType.toUpperCase()} CHUNK (Similarity: ${item.similarity})]: ${item.chunkText}`)
+      .join('\n\n');
   } catch (err) {
     console.warn('Database offline or context fetch skipped:', err.message);
     return '';
   }
 }
+
 
 /**
  * Real-Time Multi-Model LLM Streaming Response Generator (Gemini 1.5/2.0, GPT-4o, Claude 3.5 Sonnet)

@@ -2,6 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import { createRequire } from 'module';
 import pool from '../config/db.js';
+import { generateEmbedding } from '../services/embedding.js';
 
 const require = createRequire(import.meta.url);
 const rawPdfParse = require('pdf-parse');
@@ -24,7 +25,7 @@ function chunkText(text, chunkSize = 500, overlap = 50) {
 
 // Upload Text snippet (Resume / JD)
 router.post('/upload-text', async (req, res) => {
-  const { userId, docType, chunkText: text } = req.body;
+  const { userId, docType, chunkText: text, apiKey } = req.body;
 
   if (!text || !docType) {
     return res.status(400).json({ error: 'chunkText and docType are required' });
@@ -35,17 +36,21 @@ router.post('/upload-text', async (req, res) => {
     const savedChunks = [];
 
     for (let index = 0; index < chunks.length; index++) {
+      const chunkStr = chunks[index];
+      const embeddingVec = await generateEmbedding(chunkStr, apiKey);
+      const vectorStr = `[${embeddingVec.join(',')}]`;
+
       const result = await pool.query(
-        `INSERT INTO documents (user_id, doc_type, filename, chunk_text, chunk_index) 
-         VALUES ($1, $2, $3, $4, $5) 
+        `INSERT INTO documents (user_id, doc_type, filename, chunk_text, chunk_index, embedding) 
+         VALUES ($1, $2, $3, $4, $5, $6::vector) 
          RETURNING id, doc_type, chunk_text, chunk_index`,
-        [userId || '00000000-0000-0000-0000-000000000000', docType, 'manual_input.txt', chunks[index], index + 1]
+        [userId || 'demo-candidate-123', docType, 'manual_input.txt', chunkStr, index + 1, vectorStr]
       );
       savedChunks.push(result.rows[0]);
     }
 
     res.status(201).json({
-      message: `Successfully processed ${savedChunks.length} document chunks`,
+      message: `Successfully indexed ${savedChunks.length} document chunks with vector embeddings`,
       chunkCount: savedChunks.length,
       chunks: savedChunks,
     });
@@ -57,7 +62,7 @@ router.post('/upload-text', async (req, res) => {
 
 // Upload PDF / File Document
 router.post('/upload-file', upload.single('file'), async (req, res) => {
-  const { userId, docType } = req.body;
+  const { userId, docType, apiKey } = req.body;
 
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
@@ -82,20 +87,25 @@ router.post('/upload-file', upload.single('file'), async (req, res) => {
     const savedChunks = [];
 
     for (let index = 0; index < chunks.length; index++) {
+      const chunkStr = chunks[index];
+      const embeddingVec = await generateEmbedding(chunkStr, apiKey);
+      const vectorStr = `[${embeddingVec.join(',')}]`;
+
       const result = await pool.query(
-        `INSERT INTO documents (user_id, doc_type, filename, chunk_text, chunk_index) 
-         VALUES ($1, $2, $3, $4, $5) 
+        `INSERT INTO documents (user_id, doc_type, filename, chunk_text, chunk_index, embedding) 
+         VALUES ($1, $2, $3, $4, $5, $6::vector) 
          RETURNING id, doc_type, filename, chunk_index`,
-        [userId || '00000000-0000-0000-0000-000000000000', docType || 'resume', filename, chunks[index], index + 1]
+        [userId || 'demo-candidate-123', docType || 'resume', filename, chunkStr, index + 1, vectorStr]
       );
       savedChunks.push(result.rows[0]);
     }
 
     res.status(201).json({
-      message: `File "${filename}" successfully parsed and chunked into ${savedChunks.length} segments`,
+      message: `File "${filename}" successfully parsed and vector-indexed into ${savedChunks.length} chunks`,
       filename,
       chunkCount: savedChunks.length,
       status: 'ready',
+      docType: docType || 'resume',
     });
   } catch (err) {
     console.error('File parsing error:', err.message);
@@ -108,11 +118,12 @@ router.get('/', async (req, res) => {
   const { userId } = req.query;
   try {
     const result = await pool.query(
-      `SELECT DISTINCT filename, doc_type, COUNT(*) as chunk_count 
+      `SELECT filename, doc_type, COUNT(*) as chunk_count, MAX(id) as last_id
        FROM documents 
-       WHERE user_id = $1 
-       GROUP BY filename, doc_type`,
-      [userId || '00000000-0000-0000-0000-000000000000']
+       WHERE user_id = $1 OR user_id = 'demo-candidate-123' OR user_id = '00000000-0000-0000-0000-000000000000'
+       GROUP BY filename, doc_type
+       ORDER BY last_id DESC`,
+      [userId || 'demo-candidate-123']
     );
 
     res.json({ documents: result.rows });
@@ -123,3 +134,4 @@ router.get('/', async (req, res) => {
 });
 
 export default router;
+
