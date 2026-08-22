@@ -56,8 +56,8 @@ async def websocket_transcribe(websocket: WebSocket):
             if has_speech:
                 audio_buffer.extend(chunk_bytes)
                 
-                # Run transcription when buffer reaches minimum size (~1.2s of speech audio)
-                if len(audio_buffer) >= 38400:
+                # Run transcription when buffer reaches minimum size (~0.7s of speech audio)
+                if len(audio_buffer) >= 24000:
                     transcript_text = transcriber.process_audio_buffer(bytes(audio_buffer))
                     if transcript_text:
                         logger.info(f"[ASR WS] Transcribed speech segment: '{transcript_text}'")
@@ -68,8 +68,8 @@ async def websocket_transcribe(websocket: WebSocket):
                         })
                         audio_buffer.clear()
             else:
-                # Flush buffer on utterance completion (silence pause detected)
-                if len(audio_buffer) >= 12800 and vad.is_utterance_complete():
+                # Flush buffer on utterance completion (silence pause detected ~300ms)
+                if len(audio_buffer) >= 6400 and vad.is_utterance_complete():
                     transcript_text = transcriber.process_audio_buffer(bytes(audio_buffer))
                     if transcript_text:
                         logger.info(f"[ASR WS] Final utterance transcribed: '{transcript_text}'")

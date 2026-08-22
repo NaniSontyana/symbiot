@@ -21,13 +21,9 @@ export default function AudioVisualizer({
   const opacityPresets = [0.35, 0.6, 0.85, 1.0];
 
   const modelList = [
+    { id: 'gemini-1.5-flash', name: 'Google Gemini Flash', badge: 'Active Free' },
     { id: 'groq/llama-3.3-70b', name: 'Groq Llama 3.3 70B', badge: 'Ultra Fast Free' },
-    { id: 'openai/gpt-oss-120b', name: 'OpenAI GPT-OSS 120B', badge: '120B Free' },
-    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', badge: 'Ultra Fast' },
-    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', badge: 'Deep Reasoning' },
-    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', badge: 'Next-Gen' },
-    { id: 'gpt-4o', name: 'OpenAI GPT-4o', badge: 'High Intelligence' },
-    { id: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet', badge: 'Coding Leader' },
+    { id: 'openai/gpt-oss-120b', name: 'OpenAI GPT-OSS 120B', badge: 'OpenRouter Free' },
   ];
 
   const activeModelObj = modelList.find((m) => m.id === selectedModel) || modelList[0];

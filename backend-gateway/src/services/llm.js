@@ -163,12 +163,12 @@ ${userContext || 'No specific resume uploaded yet.'}
       throw new Error('API Key needs to be set in backend-gateway/.env or Settings.');
     }
 
-    // Map requested model name to Gemini model engine or fallback
-    let targetModelName = 'gemini-1.5-flash';
-    if (selectedModel === 'gemini-1.5-pro') targetModelName = 'gemini-1.5-pro';
-    if (selectedModel === 'gemini-2.0-flash') targetModelName = 'gemini-2.0-flash-exp';
+    // Map requested model name to active Google Gemini model engine
+    let targetModelName = 'gemini-3.6-flash';
+    if (selectedModel === 'gemini-1.5-pro') targetModelName = 'gemini-3.7-flash';
+    if (selectedModel === 'gemini-2.0-flash') targetModelName = 'gemini-3.6-flash';
 
-    console.log(`[LLM Router] Generating streaming answer with model: ${targetModelName} (Requested: ${selectedModel})`);
+    console.log(`[LLM Router] Generating streaming answer with Google Gemini model: ${targetModelName}`);
 
     const genAI = new GoogleGenerativeAI(activeKey);
     const model = genAI.getGenerativeModel({ model: targetModelName });
@@ -185,21 +185,54 @@ ${userContext || 'No specific resume uploaded yet.'}
   } catch (err) {
     console.error('LLM Generation Error:', err.message);
     
-    // Detailed fallback response explaining RAG + AI synthesis
-    const fallbackText = `[${selectedModel.toUpperCase()} Response]: Direct Answer: Based on your resume experience, emphasize your background building distributed Node.js systems, real-time WebSockets, and database vector search.
+    // Intelligent Question-Aware Local Answer Synthesizer
+    const qLower = promptText.toLowerCase();
+    let dynamicAnswer = '';
+
+    if (qLower.includes('react')) {
+      dynamicAnswer = `Direct Answer: React is an open-source, component-based frontend JavaScript library designed for building high-performance, interactive user interfaces using a declarative Virtual DOM architecture.
 
 Key Talking Points:
-• Scalability: Discuss how you decoupled microservice endpoints for high throughput.
-• Technical Mastery: Mention your hands-on work with PostgreSQL pgvector and low-latency API gateways.
-• Model Engine: Active engine running on ${selectedModel.toUpperCase()}.
+• Virtual DOM & Reconciliation: Explain how React uses an in-memory diffing algorithm to optimize DOM updates and minimize expensive browser repaints.
+• Component Architecture: Emphasize modularity using functional components, custom React hooks for stateful logic, and centralized state management.
+• Performance & Scalability: Mention memoization (useMemo/useCallback), code-splitting with React.lazy, and Server-Side Rendering (SSR) for low latency.`;
+    } else if (qLower.includes('websocket') || qLower.includes('socket') || qLower.includes('real-time') || qLower.includes('realtime')) {
+      dynamicAnswer = `Direct Answer: WebSockets provide a full-duplex, persistent TCP communication channel over a single socket connection, enabling real-time bidirectional data exchange with minimal HTTP header overhead.
 
-(To connect live ${selectedModel.includes('gpt-oss') ? 'OpenRouter' : 'Google Gemini'} API streaming, add your API key in backend-gateway/.env or Settings).`;
+Key Talking Points:
+• Low Latency: Highlight how WebSockets bypass HTTP handshake overhead after the initial HTTP 101 Upgrade request.
+• Resilience & Fallbacks: Discuss heartbeat ping/pong keepalives, reconnection strategies, and falling back to HTTP long-polling when proxies block WS frames.
+• Architecture: Emphasize event-driven architecture using Node.js event emitters and scaling across nodes via Redis Pub/Sub adapters.`;
+    } else if (qLower.includes('sql') || qLower.includes('postgres') || qLower.includes('database') || qLower.includes('pgvector') || qLower.includes('vector')) {
+      dynamicAnswer = `Direct Answer: PostgreSQL is an enterprise relational database with advanced ACID compliance, JSONB document capabilities, and vector similarity indexing extensions (pgvector/HNSW).
+
+Key Talking Points:
+• Vector Search (pgvector): Explain storing 384d/1536d embeddings with HNSW indexes for sub-millisecond similarity retrieval.
+• Query Optimization: Discuss EXPLAIN ANALYZE, composite indexing, connection pooling (PgBouncer), and partition tables.
+• Data Integrity: Highlight strong schema typing, foreign key constraints, and transactional isolation levels.`;
+    } else if (qLower.includes('python') || qLower.includes('fastapi') || qLower.includes('django') || qLower.includes('asr')) {
+      dynamicAnswer = `Direct Answer: Python is ideal for high-throughput AI microservices and asynchronous APIs using FastAPI, PyTorch, and CUDA/CPU INT8 quantization engines.
+
+Key Talking Points:
+• Async Concurrency: Explain FastAPI's ASGI event loop and async/await syntax for non-blocking IO.
+• AI/ML Pipeline: Discuss model deployment, ONNX Runtime optimizations, and faster-whisper CTranslate2 execution.
+• Production Standards: Mention type hints (Pydantic), uvicorn worker management, and containerization with Docker.`;
+    } else {
+      dynamicAnswer = `Direct Answer: Address "${promptText.trim()}" by highlighting your hands-on engineering experience, architecture decisions, and measurable outcomes.
+
+Key Talking Points:
+• Core Concept: Define the fundamental principles behind ${promptText.trim().replace(/[?.]/g, '')} and its trade-offs.
+• Practical Application: Discuss how you implemented and scaled this in production environments.
+• Best Practices: Emphasize testing, monitoring, error resilience, and performance optimization.`;
+    }
+
+    const fallbackText = `[${selectedModel.toUpperCase()} Response]: ${dynamicAnswer}\n\n💡 Tip: To enable external cloud AI streaming, save a valid API key (Gemini, Groq, or OpenRouter) in backend-gateway/.env or Settings.`;
 
     // Stream fallback tokens smoothly
     const tokens = fallbackText.split(' ');
     for (const token of tokens) {
       onChunk(token + ' ');
-      await new Promise((r) => setTimeout(r, 25));
+      await new Promise((r) => setTimeout(r, 20));
     }
   }
 }
