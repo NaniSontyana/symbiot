@@ -72,22 +72,39 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
   };
 
   // Start real-time audio streaming from user microphone
+  const [micError, setMicError] = useState(null);
+  const recognitionRef = useRef(null);
+
+  // Start real-time audio streaming from user microphone
   const startStreaming = async () => {
+    setMicError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
+          autoGainControl: true,
           sampleRate: 16000,
         },
       });
 
       mediaStreamRef.current = stream;
-      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
 
-      const source = audioCtxRef.current.createMediaStreamSource(stream);
-      const processor = audioCtxRef.current.createScriptProcessor(4096, 1, 1);
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const audioCtx = new AudioCtx({ sampleRate: 16000 });
+      audioCtxRef.current = audioCtx;
+
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
+
+      const source = audioCtx.createMediaStreamSource(stream);
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
+
+      // Dummy zero-gain node prevents audio feedback out of speakers
+      const muteGain = audioCtx.createGain();
+      muteGain.gain.value = 0;
 
       processor.onaudioprocess = (e) => {
         const inputData = e.inputBuffer.getChannelData(0);
@@ -98,7 +115,8 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
           sum += inputData[i] * inputData[i];
         }
         const rms = Math.sqrt(sum / inputData.length);
-        setAudioLevel(Math.min(100, Math.floor(rms * 400)));
+        const level = Math.min(100, Math.floor(rms * 500));
+        setAudioLevel(level);
 
         // Send binary PCM chunk over WebSocket if open
         if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
@@ -108,17 +126,64 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
       };
 
       source.connect(processor);
-      processor.connect(audioCtxRef.current.destination);
+      processor.connect(muteGain);
+      muteGain.connect(audioCtx.destination);
+
+      // Initialize WebSpeech SpeechRecognition fallback if available in browser/Electron
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        try {
+          const rec = new SpeechRecognition();
+          rec.continuous = true;
+          rec.interimResults = true;
+          rec.lang = 'en-US';
+
+          rec.onresult = (event) => {
+            let interim = '';
+            let final = '';
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+              const transcriptText = event.results[i][0].transcript;
+              if (event.results[i].isFinal) {
+                final += transcriptText;
+              } else {
+                interim += transcriptText;
+              }
+            }
+            if (interim) {
+              setLiveTranscript(interim);
+            }
+            if (final && final.trim()) {
+              setLiveTranscript(final);
+              if (onTranscriptReceived) {
+                onTranscriptReceived(final);
+              }
+            }
+          };
+
+          rec.start();
+          recognitionRef.current = rec;
+        } catch (recErr) {
+          console.log('[WebSpeech] SpeechRecognition init skipped:', recErr.message);
+        }
+      }
 
       setIsStreaming(true);
-      console.log('[ASR Streamer] Live mic streaming started');
+      console.log('[ASR Streamer] Live mic streaming active');
     } catch (err) {
-      console.error('[ASR Streamer] Failed to access microphone:', err);
+      console.error('[ASR Streamer] Microphone access error:', err);
+      setMicError(err.name === 'NotAllowedError' ? 'Microphone permission denied. Please allow mic access.' : err.message);
+      setIsStreaming(false);
     }
   };
 
   // Stop audio streaming
   const stopStreaming = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
+      recognitionRef.current = null;
+    }
     if (processorRef.current) {
       processorRef.current.disconnect();
       processorRef.current = null;
@@ -142,5 +207,6 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     stopStreaming,
     liveTranscript,
     audioLevel,
+    micError,
   };
 }

@@ -63,26 +63,80 @@ function createNormalizedMockVector(text, dim = 384) {
 }
 
 /**
- * Perform RAG Vector Similarity Search in PostgreSQL (pgvector HNSW)
+ * Cosine similarity helper for vectors
+ */
+function calculateCosineSimilarity(vecA, vecB) {
+  if (!Array.isArray(vecA) || !Array.isArray(vecB)) return 0;
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+  const len = Math.min(vecA.length, vecB.length);
+  for (let i = 0; i < len; i++) {
+    dotProduct += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
+  const denominator = Math.sqrt(normA) * Math.sqrt(normB);
+  return denominator ? dotProduct / denominator : 0;
+}
+
+/**
+ * Perform RAG Vector Similarity Search in PostgreSQL (pgvector HNSW + JSONB Fallback)
  */
 export async function searchVectorChunks(userId, queryText, customApiKey = null, limit = 5) {
   try {
     const queryEmbedding = await generateEmbedding(queryText, customApiKey);
-    const vectorStr = `[${queryEmbedding.join(',')}]`;
+    const targetUserId = userId || '00000000-0000-0000-0000-000000000000';
+    let resultRows = [];
 
-    const result = await pool.query(
-      `SELECT chunk_text, doc_type, filename, 
-              (1 - (embedding <=> $1::vector)) AS similarity
-       FROM documents 
-       WHERE (user_id = $2 OR user_id = '00000000-0000-0000-0000-000000000000' OR user_id = 'demo-candidate-123')
-         AND embedding IS NOT NULL
-       ORDER BY embedding <=> $1::vector ASC 
-       LIMIT $3`,
-      [vectorStr, userId, limit]
-    );
+    // Try native pgvector HNSW search first
+    try {
+      const vectorStr = `[${queryEmbedding.join(',')}]`;
+      const pgVectorResult = await pool.query(
+        `SELECT chunk_text, doc_type, filename, 
+                (1 - (embedding <=> $1::vector)) AS similarity
+         FROM documents 
+         WHERE (user_id = $2 OR user_id = '00000000-0000-0000-0000-000000000000' OR user_id = '00000000-0000-0000-0000-000000000000')
+           AND embedding IS NOT NULL
+         ORDER BY embedding <=> $1::vector ASC 
+         LIMIT $3`,
+        [vectorStr, targetUserId, limit]
+      );
+      resultRows = pgVectorResult.rows.map(r => ({
+        chunkText: r.chunk_text,
+        docType: r.doc_type,
+        filename: r.filename,
+        similarity: parseFloat(r.similarity).toFixed(3)
+      }));
+    } catch (vErr) {
+      // Fallback: Fetch JSONB embeddings and compute cosine similarity in JS
+      const allDocsResult = await pool.query(
+        `SELECT chunk_text, doc_type, filename, embedding 
+         FROM documents 
+         WHERE (user_id = $1 OR user_id = '00000000-0000-0000-0000-000000000000' OR user_id = '00000000-0000-0000-0000-000000000000')
+           AND embedding IS NOT NULL`,
+        [targetUserId]
+      );
 
-    if (result.rows.length === 0) {
-      // Fallback query if no embeddings match yet
+      const scored = allDocsResult.rows.map(row => {
+        let docVec = [];
+        try {
+          docVec = typeof row.embedding === 'string' ? JSON.parse(row.embedding) : row.embedding;
+        } catch (e) {}
+        const sim = calculateCosineSimilarity(queryEmbedding, docVec);
+        return {
+          chunkText: row.chunk_text,
+          docType: row.doc_type,
+          filename: row.filename,
+          similarity: parseFloat(sim).toFixed(3)
+        };
+      });
+
+      scored.sort((a, b) => b.similarity - a.similarity);
+      resultRows = scored.slice(0, limit);
+    }
+
+    if (resultRows.length === 0) {
       const fallbackResult = await pool.query(
         `SELECT chunk_text, doc_type, filename 
          FROM documents 
@@ -98,12 +152,7 @@ export async function searchVectorChunks(userId, queryText, customApiKey = null,
       }));
     }
 
-    return result.rows.map((row) => ({
-      chunkText: row.chunk_text,
-      docType: row.doc_type,
-      filename: row.filename,
-      similarity: parseFloat(row.similarity).toFixed(3),
-    }));
+    return resultRows;
   } catch (err) {
     console.warn('[Vector Search] Database vector search skipped/fallback:', err.message);
     return [];

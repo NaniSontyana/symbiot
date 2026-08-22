@@ -16,12 +16,24 @@ export async function initDatabase() {
   console.log('🗄️  Symbiot PostgreSQL Database Setup & Migration');
   console.log('====================================================');
 
-  const urlObj = new URL(dbUrl);
-  const user = urlObj.username || 'postgres';
-  const password = urlObj.password || 'postgres';
-  const host = urlObj.hostname || 'localhost';
-  const port = parseInt(urlObj.port || '5432', 10);
-  const dbName = urlObj.pathname.replace('/', '') || 'parakeet_db';
+  let user = process.env.PGUSER || process.env.DB_USER || 'postgres';
+  let password = process.env.PGPASSWORD || process.env.DB_PASSWORD || 'postgres';
+  let host = process.env.PGHOST || process.env.DB_HOST || 'localhost';
+  let port = parseInt(process.env.PGPORT || process.env.DB_PORT || '5432', 10);
+  let dbName = process.env.PGDATABASE || process.env.DB_NAME || 'parakeet_db';
+
+  if (process.env.DATABASE_URL && !process.env.PGPASSWORD && !process.env.DB_PASSWORD) {
+    try {
+      const urlObj = new URL(process.env.DATABASE_URL);
+      user = urlObj.username ? decodeURIComponent(urlObj.username) : user;
+      password = urlObj.password ? decodeURIComponent(urlObj.password) : password;
+      host = urlObj.hostname || host;
+      port = parseInt(urlObj.port || String(port), 10);
+      dbName = urlObj.pathname.replace(/^\//, '') || dbName;
+    } catch (e) {
+      // If URL parsing fails
+    }
+  }
 
   console.log(`📡 Connecting to PostgreSQL instance at ${host}:${port} as user "${user}"...`);
 
@@ -67,9 +79,28 @@ export async function initDatabase() {
     console.log(`📜 Reading schema from: ${schemaPath}`);
     const schemaSql = fs.readFileSync(schemaPath, 'utf8');
 
-    console.log(`⚡ Executing schema migration & pgvector extension setup...`);
-    await dbPool.query(schemaSql);
-    console.log(`✅ All tables (users, sessions, documents, transcripts) & vector indexes created!`);
+    console.log(`⚡ Executing schema migration...`);
+    
+    // Check if pgvector extension is available
+    let hasVector = false;
+    try {
+      await dbPool.query('CREATE EXTENSION IF NOT EXISTS vector;');
+      hasVector = true;
+      console.log('✅ pgvector extension enabled!');
+    } catch (vErr) {
+      console.warn('ℹ️  pgvector extension not installed locally. Using JSONB fallback for document embeddings.');
+    }
+
+    // Adapt schema if vector extension is not available
+    let executableSql = schemaSql.replace('CREATE EXTENSION IF NOT EXISTS vector;', '');
+    if (!hasVector) {
+      executableSql = executableSql
+        .replace('embedding    VECTOR(384)', 'embedding    JSONB')
+        .replace(/CREATE INDEX IF NOT EXISTS documents_embedding_hnsw_idx[\s\S]*?vector_cosine_ops\);/, '');
+    }
+
+    await dbPool.query(executableSql);
+    console.log(`✅ All tables (users, sessions, documents, transcripts) created successfully!`);
 
     // Step 3: Insert default demo user
     const demoUserId = '00000000-0000-0000-0000-000000000000';
@@ -80,7 +111,7 @@ export async function initDatabase() {
       [demoUserId]
     );
 
-    console.log('🎉 Database initialization complete and ready for RAG vector queries!');
+    console.log('🎉 Database initialization complete and ready!');
   } catch (err) {
     console.error('❌ Database Setup Error:', err.message);
     console.error(`💡 Tip: Check backend-gateway/.env DATABASE_URL credentials or run PostgreSQL locally.`);

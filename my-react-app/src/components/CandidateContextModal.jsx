@@ -26,7 +26,7 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
 
   const fetchIndexedDocuments = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/documents?userId=demo-candidate-123');
+      const res = await fetch('http://localhost:5000/api/documents?userId=00000000-0000-0000-0000-000000000000');
       if (res.ok) {
         const data = await res.json();
         setIndexedDocs(data.documents || []);
@@ -48,7 +48,7 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
     const formData = new FormData();
     formData.append('file', file);
     formData.append('docType', docType);
-    formData.append('userId', 'demo-candidate-123');
+    formData.append('userId', '00000000-0000-0000-0000-000000000000');
     if (apiKey) {
       formData.append('apiKey', apiKey);
     }
@@ -236,7 +236,7 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
             <label style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
               <Database size={13} color="#10b981" /> Vector Database RAG Index ({indexedDocs.length} Documents)
             </label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
               {indexedDocs.map((doc, idx) => (
                 <div key={idx} style={{
                   display: 'flex',
@@ -248,14 +248,28 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
                   border: '1px solid rgba(255, 255, 255, 0.08)',
                   fontSize: '0.78rem'
                 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <FileText size={14} color="#10b981" />
-                    <span style={{ fontWeight: 600 }}>{doc.filename}</span>
-                    <span style={{ fontSize: '0.7rem', color: '#9ca3af', textTransform: 'uppercase' }}>({doc.doc_type})</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                    <FileText size={14} color="#10b981" style={{ flexShrink: 0 }} />
+                    <span style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '240px' }}>{doc.filename}</span>
+                    <span style={{ fontSize: '0.68rem', color: '#9ca3af', textTransform: 'uppercase' }}>({doc.doc_type})</span>
                   </div>
-                  <span style={{ fontSize: '0.72rem', color: '#10b981', background: 'rgba(16, 185, 129, 0.12)', padding: '2px 8px', borderRadius: '12px' }}>
-                    {doc.chunk_count} Chunks (HNSW 384d)
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ fontSize: '0.72rem', color: '#10b981', background: 'rgba(16, 185, 129, 0.12)', padding: '2px 8px', borderRadius: '12px' }}>
+                      {doc.chunk_count} Chunks
+                    </span>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await fetch(`http://localhost:5000/api/documents/${encodeURIComponent(doc.filename)}?userId=00000000-0000-0000-0000-000000000000`, { method: 'DELETE' });
+                          fetchIndexedDocuments();
+                        } catch (e) {}
+                      }}
+                      style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px' }}
+                      title="Delete document index"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

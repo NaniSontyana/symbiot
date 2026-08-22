@@ -74,7 +74,7 @@ export default function App() {
         JSON.stringify({
           type: 'transcript_question',
           questionText: query,
-          userId: 'demo-candidate-123',
+          userId: '00000000-0000-0000-0000-000000000000',
           apiKey: apiKey || null,
           resumeContext: candidateContext,
           selectedModel: selectedModel
@@ -93,7 +93,7 @@ export default function App() {
   }, [customQuestion, apiKey, candidateContext, selectedModel, isCollapsed]);
 
   // Audio streamer hook for direct mic ASR connection
-  const { isStreaming, startStreaming, stopStreaming, liveTranscript, audioLevel } = useAudioStreamer(
+  const { isStreaming, startStreaming, stopStreaming, liveTranscript, audioLevel, micError } = useAudioStreamer(
     'ws://localhost:8000/ws/transcribe',
     (detectedText) => {
       if (detectedText) {
@@ -203,6 +203,7 @@ export default function App() {
               onToggleMic={handleToggleMic}
               audioLevel={audioLevel}
               liveTranscript={liveTranscript}
+              micError={micError}
               selectedModel={selectedModel}
               setSelectedModel={setSelectedModel}
               opacity={opacity}

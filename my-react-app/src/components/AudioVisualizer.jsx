@@ -6,6 +6,7 @@ export default function AudioVisualizer({
   onToggleMic,
   audioLevel,
   liveTranscript,
+  micError,
   selectedModel,
   setSelectedModel,
   opacity,
@@ -20,6 +21,8 @@ export default function AudioVisualizer({
   const opacityPresets = [0.35, 0.6, 0.85, 1.0];
 
   const modelList = [
+    { id: 'groq/llama-3.3-70b', name: 'Groq Llama 3.3 70B', badge: 'Ultra Fast Free' },
+    { id: 'openai/gpt-oss-120b', name: 'OpenAI GPT-OSS 120B', badge: '120B Free' },
     { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', badge: 'Ultra Fast' },
     { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', badge: 'Deep Reasoning' },
     { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', badge: 'Next-Gen' },
@@ -210,6 +213,24 @@ export default function AudioVisualizer({
           </button>
         </div>
       </div>
+
+      {/* Microphone Error Alert Banner */}
+      {micError && (
+        <div style={{
+          padding: '8px 12px',
+          borderRadius: '8px',
+          background: 'rgba(239, 68, 68, 0.15)',
+          border: '1px solid rgba(239, 68, 68, 0.3)',
+          color: '#f87171',
+          fontSize: '0.8rem',
+          marginBottom: '12px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px'
+        }}>
+          <MicOff size={14} /> {micError}
+        </div>
+      )}
 
       {/* Mic Record Button & Audio Level Stream */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '20px' }}>

@@ -34,17 +34,21 @@ router.post('/upload-text', async (req, res) => {
   try {
     const chunks = chunkText(text);
     const savedChunks = [];
+    const targetUserId = userId || '00000000-0000-0000-0000-000000000000';
+
+    // Clear existing manual input for clean re-indexing
+    await pool.query(`DELETE FROM documents WHERE filename = 'manual_input.txt' AND user_id = $1`, [targetUserId]);
 
     for (let index = 0; index < chunks.length; index++) {
       const chunkStr = chunks[index];
       const embeddingVec = await generateEmbedding(chunkStr, apiKey);
-      const vectorStr = `[${embeddingVec.join(',')}]`;
+      const vectorVal = JSON.stringify(embeddingVec);
 
       const result = await pool.query(
         `INSERT INTO documents (user_id, doc_type, filename, chunk_text, chunk_index, embedding) 
-         VALUES ($1, $2, $3, $4, $5, $6::vector) 
+         VALUES ($1, $2, $3, $4, $5, $6) 
          RETURNING id, doc_type, chunk_text, chunk_index`,
-        [userId || 'demo-candidate-123', docType, 'manual_input.txt', chunkStr, index + 1, vectorStr]
+        [targetUserId, docType, 'manual_input.txt', chunkStr, index + 1, vectorVal]
       );
       savedChunks.push(result.rows[0]);
     }
@@ -85,17 +89,21 @@ router.post('/upload-file', upload.single('file'), async (req, res) => {
 
     const chunks = chunkText(extractedText);
     const savedChunks = [];
+    const targetUserId = userId || '00000000-0000-0000-0000-000000000000';
+
+    // Remove old chunks of same filename to prevent duplicate indexing
+    await pool.query(`DELETE FROM documents WHERE filename = $1 AND user_id = $2`, [filename, targetUserId]);
 
     for (let index = 0; index < chunks.length; index++) {
       const chunkStr = chunks[index];
       const embeddingVec = await generateEmbedding(chunkStr, apiKey);
-      const vectorStr = `[${embeddingVec.join(',')}]`;
+      const vectorVal = JSON.stringify(embeddingVec);
 
       const result = await pool.query(
         `INSERT INTO documents (user_id, doc_type, filename, chunk_text, chunk_index, embedding) 
-         VALUES ($1, $2, $3, $4, $5, $6::vector) 
+         VALUES ($1, $2, $3, $4, $5, $6) 
          RETURNING id, doc_type, filename, chunk_index`,
-        [userId || 'demo-candidate-123', docType || 'resume', filename, chunkStr, index + 1, vectorStr]
+        [targetUserId, docType || 'resume', filename, chunkStr, index + 1, vectorVal]
       );
       savedChunks.push(result.rows[0]);
     }
@@ -118,18 +126,37 @@ router.get('/', async (req, res) => {
   const { userId } = req.query;
   try {
     const result = await pool.query(
-      `SELECT filename, doc_type, COUNT(*) as chunk_count, MAX(id) as last_id
+      `SELECT filename, doc_type, COUNT(*) as chunk_count, MAX(id::text) as last_id
        FROM documents 
-       WHERE user_id = $1 OR user_id = 'demo-candidate-123' OR user_id = '00000000-0000-0000-0000-000000000000'
+       WHERE user_id = $1 OR user_id = '00000000-0000-0000-0000-000000000000' OR user_id = '00000000-0000-0000-0000-000000000000'
        GROUP BY filename, doc_type
        ORDER BY last_id DESC`,
-      [userId || 'demo-candidate-123']
+      [userId || '00000000-0000-0000-0000-000000000000']
     );
 
     res.json({ documents: result.rows });
   } catch (err) {
     console.error('Fetch documents error:', err.message);
     res.status(500).json({ error: 'Failed to fetch candidate documents' });
+  }
+});
+
+// Delete uploaded document by filename
+router.delete('/:filename', async (req, res) => {
+  const { filename } = req.params;
+  const { userId } = req.query;
+
+  try {
+    const result = await pool.query(
+      `DELETE FROM documents 
+       WHERE filename = $1 AND (user_id = $2 OR user_id = '00000000-0000-0000-0000-000000000000' OR user_id = '00000000-0000-0000-0000-000000000000')`,
+      [filename, userId || '00000000-0000-0000-0000-000000000000']
+    );
+
+    res.json({ message: `Successfully deleted document "${filename}"`, deletedCount: result.rowCount });
+  } catch (err) {
+    console.error('Delete document error:', err.message);
+    res.status(500).json({ error: 'Failed to delete document' });
   }
 });
 
