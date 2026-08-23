@@ -26,7 +26,7 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
 
   const fetchIndexedDocuments = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/documents?userId=00000000-0000-0000-0000-000000000000');
+      const res = await fetch('http://localhost:8080/api/documents?userId=00000000-0000-0000-0000-000000000000');
       if (res.ok) {
         const data = await res.json();
         setIndexedDocs(data.documents || []);
@@ -54,7 +54,7 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
     }
 
     try {
-      const response = await fetch('http://localhost:5000/api/documents/upload-file', {
+      const response = await fetch('http://localhost:8080/api/documents/upload-file', {
         method: 'POST',
         body: formData,
       });
@@ -260,7 +260,7 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
                     <button
                       onClick={async () => {
                         try {
-                          await fetch(`http://localhost:5000/api/documents/${encodeURIComponent(doc.filename)}?userId=00000000-0000-0000-0000-000000000000`, { method: 'DELETE' });
+                          await fetch(`http://localhost:8080/api/documents/${encodeURIComponent(doc.filename)}?userId=00000000-0000-0000-0000-000000000000`, { method: 'DELETE' });
                           fetchIndexedDocuments();
                         } catch (e) {}
                       }}

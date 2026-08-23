@@ -1,3 +1,4 @@
+import os
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,24 +18,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Read GROQ_API_KEY from backend-gateway/.env if present
+groq_key = os.getenv("GROQ_API_KEY")
+if not groq_key and os.path.exists("../backend-gateway/.env"):
+    try:
+        with open("../backend-gateway/.env", "r") as f:
+            for line in f:
+                if line.startswith("GROQ_API_KEY="):
+                    groq_key = line.strip().split("=", 1)[1]
+                    break
+    except Exception:
+        pass
+
 vad = VoiceActivityDetector()
-transcriber = ParakeetTranscriber()
+transcriber = ParakeetTranscriber(groq_api_key=groq_key)
 
 @app.get("/health")
 def health_check():
+    has_groq = bool(transcriber.groq_api_key and transcriber.groq_api_key.startswith("gsk_"))
     return {
         "status": "healthy",
         "service": "symbiot-asr-service",
-        "engine": getattr(transcriber, "model_name", "whisper")
+        "engine": "groq-whisper-v3-turbo (80ms)" if has_groq else getattr(transcriber, "model_name", "local-whisper")
     }
 
 @app.websocket("/ws/transcribe")
 async def websocket_transcribe(websocket: WebSocket):
     await websocket.accept()
-    logger.info("[ASR WS] Client connected to real-time speech pipeline")
+    logger.info("[ASR WS] Client connected to real-time dual-channel speech pipeline")
     
-    audio_buffer = bytearray()
-    MAX_BUFFER_SIZE = 16000 * 2 * 10  # 10 seconds of 16kHz 16-bit audio
+    interviewer_buffer = bytearray()
+    applicant_buffer = bytearray()
+    MAX_BUFFER_SIZE = 16000 * 2 * 10
+    active_speaker = "interviewer"
     
     try:
         while True:
@@ -44,45 +60,72 @@ async def websocket_transcribe(websocket: WebSocket):
                 break
 
             if "bytes" in message and message["bytes"]:
-                chunk_bytes = message["bytes"]
-            elif "text" in message and message["text"]:
-                continue
-            else:
-                continue
+                raw_bytes = message["bytes"]
+                if len(raw_bytes) == 0:
+                    continue
 
-            # Evaluate Voice Activity Detection (VAD)
-            has_speech = vad.is_speech(chunk_bytes)
-            
-            if has_speech:
-                audio_buffer.extend(chunk_bytes)
-                
-                # Run transcription when buffer reaches minimum size (~0.7s of speech audio)
-                if len(audio_buffer) >= 24000:
-                    transcript_text = transcriber.process_audio_buffer(bytes(audio_buffer))
-                    if transcript_text:
-                        logger.info(f"[ASR WS] Transcribed speech segment: '{transcript_text}'")
-                        await websocket.send_json({
-                            "type": "transcript_chunk",
-                            "text": transcript_text,
-                            "is_final": True
-                        })
-                        audio_buffer.clear()
-            else:
-                # Flush buffer on utterance completion (silence pause detected ~300ms)
-                if len(audio_buffer) >= 6400 and vad.is_utterance_complete():
-                    transcript_text = transcriber.process_audio_buffer(bytes(audio_buffer))
-                    if transcript_text:
-                        logger.info(f"[ASR WS] Final utterance transcribed: '{transcript_text}'")
-                        await websocket.send_json({
-                            "type": "transcript_chunk",
-                            "text": transcript_text,
-                            "is_final": True
-                        })
-                    audio_buffer.clear()
+                # Check channel header prefix (0x01 = Interviewer / System, 0x02 = Applicant / Mic)
+                if raw_bytes[0] in (0x01, 0x02):
+                    channel = "interviewer" if raw_bytes[0] == 0x01 else "applicant"
+                    chunk_bytes = raw_bytes[1:]
+                else:
+                    channel = active_speaker
+                    chunk_bytes = raw_bytes
+
+                target_buffer = interviewer_buffer if channel == "interviewer" else applicant_buffer
+
+                # Evaluate Voice Activity Detection (VAD)
+                has_speech = vad.is_speech(chunk_bytes)
+                if has_speech:
+                    target_buffer.extend(chunk_bytes)
+                    if len(target_buffer) >= 24000:
+                        res = transcriber.process_audio_buffer(bytes(target_buffer))
+                        transcript_text, engine_used = res if isinstance(res, tuple) else (res, "whisper")
+                        if transcript_text:
+                            logger.info(f"[ASR WS] Transcribed [{channel}] [{engine_used}]: '{transcript_text}'")
+                            await websocket.send_json({
+                                "type": "transcript_chunk",
+                                "text": transcript_text,
+                                "speaker": channel,
+                                "engine": engine_used,
+                                "is_final": True
+                            })
+                            target_buffer.clear()
+                        vad.reset()
+                else:
+                    if len(target_buffer) >= 6400 and vad.is_utterance_complete():
+                        res = transcriber.process_audio_buffer(bytes(target_buffer))
+                        transcript_text, engine_used = res if isinstance(res, tuple) else (res, "whisper")
+                        if transcript_text:
+                            logger.info(f"[ASR WS] Final utterance [{channel}] [{engine_used}]: '{transcript_text}'")
+                            await websocket.send_json({
+                                "type": "transcript_chunk",
+                                "text": transcript_text,
+                                "speaker": channel,
+                                "engine": engine_used,
+                                "is_final": True
+                            })
+                        target_buffer.clear()
+                        vad.reset()
+            elif "text" in message and message["text"]:
+                try:
+                    payload = json.loads(message["text"])
+                    if payload.get("type") == "set_speaker":
+                        active_speaker = payload.get("speaker", "interviewer")
+                        logger.info(f"[ASR WS] Manual fallback speaker set to: '{active_speaker}'")
+                    elif payload.get("type") == "reset_buffer":
+                        interviewer_buffer.clear()
+                        applicant_buffer.clear()
+                        vad.reset()
+                        logger.info("[ASR WS] ⚡ Audio buffers flushed & VAD reset. Ready for next question!")
+                except Exception:
+                    pass
 
             # Prevent memory overflow
-            if len(audio_buffer) > MAX_BUFFER_SIZE:
-                audio_buffer.clear()
+            if len(interviewer_buffer) > MAX_BUFFER_SIZE:
+                interviewer_buffer.clear()
+            if len(applicant_buffer) > MAX_BUFFER_SIZE:
+                applicant_buffer.clear()
 
     except WebSocketDisconnect:
         logger.info("[ASR WS] Client disconnected")

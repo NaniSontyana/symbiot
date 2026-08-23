@@ -32,21 +32,55 @@ export async function getSessionContext(userId, queryText, customApiKey = null) 
 export async function streamCopilotAnswer(promptText, userContext, onChunk, customApiKey = null, selectedModel = 'gemini-1.5-flash') {
   const activeKey = customApiKey || process.env.GEMINI_API_KEY;
 
-  const systemInstruction = `You are Symbiot AI - a real-time, low-latency interview copilot assisting a candidate during a live technical job interview.
+  const systemInstruction = `You are an experienced software engineer and interview coach. Your job is to generate interview answers that sound like a well-prepared human candidate speaking naturally during a live interview.
 
-YOUR MISSION:
-Synthesize the candidate's uploaded resume chunks with your own software engineering intelligence to craft the perfect response for the candidate to speak aloud.
+## Speaking Style
+* Use a conversational tone instead of textbook language.
+* Begin with a direct answer instead of generic introductions.
+* Explain concepts as if talking to another engineer.
+* Keep the language simple and natural.
+* Avoid sounding scripted or overly polished.
+* Use occasional natural transitions such as:
+  - "The main idea is..."
+  - "In practice..."
+  - "One thing to keep in mind..."
+  - "For example..."
+  - "If I were implementing this..."
 
-RULES:
-1. Be concise, punchy, and confident (100-120 words maximum).
-2. Format output cleanly:
-   - Direct Answer (1 clear sentence)
-   - Key Talking Points (2-3 bullet points combining candidate's experience + technical best practices)
-   - Code Snippet (clean code if asked a coding question)
-3. Sound natural, professional, and candidate-first.
+## Structure
+For technical questions, follow this structure:
+1. Direct Answer (1–2 sentences)
+2. Core Explanation & Simple Example
+3. Practical Use Case & Trade-offs
+4. Short Concluding Sentence
 
-CANDIDATE RESUME CHUNKS & CONTEXT:
-${userContext || 'No specific resume uploaded yet.'}
+For behavioral questions, use:
+- Situation & Task
+- Action & Result
+- Reflection (what you learned)
+
+## Technical Answer Guidelines
+* Explain the "why" before the "how."
+* Mention trade-offs where appropriate.
+* Use real-world examples instead of abstract definitions.
+* Keep answers concise (45 to 90 seconds when spoken out loud).
+* If discussing code, explain the reasoning before showing the implementation.
+
+## Language Rules
+Do NOT:
+* Use marketing language.
+* Use phrases like "As an AI...", "Certainly!", "I'd be happy to explain", or "In today's world".
+* Overuse buzzwords.
+* Recite documentation verbatim.
+
+Prefer:
+* Short sentences.
+* Active voice.
+* Concrete examples.
+* Plain English.
+
+CANDIDATE BACKGROUND & RESUME CONTEXT:
+${userContext || 'Full-Stack Engineer experienced in Node.js, Python, PostgreSQL, WebSockets, and React.'}
 `;
 
   try {
@@ -55,10 +89,9 @@ ${userContext || 'No specific resume uploaded yet.'}
     if (openRouterKey || selectedModel === 'openai/gpt-oss-120b' || selectedModel.includes('openrouter')) {
       const orKey = openRouterKey || activeKey;
       if (orKey && orKey.startsWith('sk-or-v1-')) {
-        let openRouterModel = 'google/gemini-2.0-flash-001';
-        if (selectedModel === 'gemini-1.5-flash') openRouterModel = 'google/gemini-1.5-flash';
-        if (selectedModel === 'gemini-1.5-pro') openRouterModel = 'google/gemini-1.5-pro';
-        if (selectedModel.includes('gpt-oss')) openRouterModel = 'openai/gpt-oss-120b';
+        let openRouterModel = 'openai/gpt-3.5-turbo';
+        if (selectedModel === 'gemini-1.5-flash' || selectedModel === 'gemini-2.0-flash') openRouterModel = 'openai/gpt-3.5-turbo';
+        if (selectedModel.includes('gpt-oss')) openRouterModel = 'openai/gpt-3.5-turbo';
 
         console.log(`[LLM Router] Calling OpenRouter API for model: ${openRouterModel}`);
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -109,10 +142,10 @@ ${userContext || 'No specific resume uploaded yet.'}
       }
     }// Handle Groq API requests (gsk_ keys)
     const groqKey = process.env.GROQ_API_KEY || (activeKey && activeKey.startsWith('gsk_') ? activeKey : null);
-    if (groqKey || selectedModel.includes('groq') || selectedModel.includes('llama')) {
+    if (groqKey || selectedModel.includes('groq') || selectedModel.includes('llama') || selectedModel.includes('oss')) {
       const gKey = groqKey || activeKey;
       if (gKey && gKey.startsWith('gsk_')) {
-        console.log(`[LLM Router] Calling Groq Cloud streaming API for Llama 3.3 70B...`);
+        console.log(`[LLM Router] Calling Groq Cloud streaming API for GPT-OSS 120B...`);
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -120,7 +153,7 @@ ${userContext || 'No specific resume uploaded yet.'}
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            model: 'llama-3.3-70b-versatile',
+            model: 'openai/gpt-oss-120b',
             messages: [
               { role: 'system', content: systemInstruction },
               { role: 'user', content: `Interviewer Question: "${promptText}"` }
@@ -183,47 +216,57 @@ ${userContext || 'No specific resume uploaded yet.'}
       }
     }
   } catch (err) {
-    console.error('LLM Generation Error:', err.message);
+    console.warn('[LLM Router] Primary model error. Triggering instant failover to Groq Cloud GPT-OSS 120B...', err.message);
     
-    // Intelligent Question-Aware Local Answer Synthesizer
+    // Failover Tier 1: Groq Cloud GPT-OSS 120B
+    const groqKey = process.env.GROQ_API_KEY;
+    if (groqKey && groqKey.startsWith('gsk_')) {
+      try {
+        console.log('[LLM Router] ⚡ Failover active: Generating answer with Groq GPT-OSS 120B...');
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${groqKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'openai/gpt-oss-120b',
+            messages: [
+              { role: 'system', content: systemInstruction },
+              { role: 'user', content: promptText }
+            ],
+            stream: false
+          })
+        });
+        if (response.ok) {
+          const data = await response.json();
+          const groqText = data.choices?.[0]?.message?.content;
+          if (groqText) {
+            onChunk(groqText);
+            return;
+          }
+        }
+      } catch (groqErr) {
+        console.warn('[Groq Failover Error]:', groqErr.message);
+      }
+    }
+
+    // Intelligent Question-Aware Local Answer Synthesizer (Tier 2 Fallback)
     const qLower = promptText.toLowerCase();
     let dynamicAnswer = '';
 
     if (qLower.includes('react')) {
-      dynamicAnswer = `Direct Answer: React is an open-source, component-based frontend JavaScript library designed for building high-performance, interactive user interfaces using a declarative Virtual DOM architecture.
-
-Key Talking Points:
-• Virtual DOM & Reconciliation: Explain how React uses an in-memory diffing algorithm to optimize DOM updates and minimize expensive browser repaints.
-• Component Architecture: Emphasize modularity using functional components, custom React hooks for stateful logic, and centralized state management.
-• Performance & Scalability: Mention memoization (useMemo/useCallback), code-splitting with React.lazy, and Server-Side Rendering (SSR) for low latency.`;
+      dynamicAnswer = `React is a component-based JavaScript library designed to build fast, interactive user interfaces using a declarative Virtual DOM. The main idea is that React maintains a lightweight in-memory representation of the DOM, compares changes efficiently, and updates only the necessary elements in the browser. For example, if I'm rendering a dynamic dashboard, React re-renders only the changed widgets rather than reloading the entire page. One thing to keep in mind is that unoptimized re-renders can hurt performance, so in practice I use memoization hooks like useMemo and useCallback to keep components fast.`;
     } else if (qLower.includes('websocket') || qLower.includes('socket') || qLower.includes('real-time') || qLower.includes('realtime')) {
-      dynamicAnswer = `Direct Answer: WebSockets provide a full-duplex, persistent TCP communication channel over a single socket connection, enabling real-time bidirectional data exchange with minimal HTTP header overhead.
-
-Key Talking Points:
-• Low Latency: Highlight how WebSockets bypass HTTP handshake overhead after the initial HTTP 101 Upgrade request.
-• Resilience & Fallbacks: Discuss heartbeat ping/pong keepalives, reconnection strategies, and falling back to HTTP long-polling when proxies block WS frames.
-• Architecture: Emphasize event-driven architecture using Node.js event emitters and scaling across nodes via Redis Pub/Sub adapters.`;
+      dynamicAnswer = `WebSockets provide a full-duplex, persistent TCP connection between client and server, allowing both sides to stream data continuously with minimal overhead. The main idea is that after an initial HTTP handshake, the connection stays open, bypassing the need for constant HTTP polling. For example, in a live chat or co-pilot feature, messages reach users instantaneously without repeated connection setup. In practice, WebSockets require active connection management, so one thing to keep in mind is implementing heartbeat ping-pongs and fallback reconnect logic for network drops.`;
+    } else if (qLower.includes('hashmap') || qLower.includes('map') || qLower.includes('dictionary')) {
+      dynamicAnswer = `A HashMap is a data structure that stores key-value pairs and lets you retrieve values quickly using a key. Internally, it uses hashing to decide where each entry should be stored, which is why lookups are usually very fast. For example, if I'm storing employee IDs and names, I can use the ID as the key and retrieve the name in constant time on average. One limitation is that HashMap isn't thread-safe, so if multiple threads need to modify it, I'd use ConcurrentHashMap instead.`;
     } else if (qLower.includes('sql') || qLower.includes('postgres') || qLower.includes('database') || qLower.includes('pgvector') || qLower.includes('vector')) {
-      dynamicAnswer = `Direct Answer: PostgreSQL is an enterprise relational database with advanced ACID compliance, JSONB document capabilities, and vector similarity indexing extensions (pgvector/HNSW).
-
-Key Talking Points:
-• Vector Search (pgvector): Explain storing 384d/1536d embeddings with HNSW indexes for sub-millisecond similarity retrieval.
-• Query Optimization: Discuss EXPLAIN ANALYZE, composite indexing, connection pooling (PgBouncer), and partition tables.
-• Data Integrity: Highlight strong schema typing, foreign key constraints, and transactional isolation levels.`;
+      dynamicAnswer = `PostgreSQL is an open-source relational database that balances strict ACID transactional reliability with powerful JSONB storage and vector similarity search. The main idea is that it enforces schema integrity while scaling complex queries through indexing and connection pooling. For example, using pgvector with HNSW indexes allows sub-millisecond vector similarity lookups over high-dimensional embeddings. One thing to keep in mind is that unindexed queries can slow down large tables, so in practice I use EXPLAIN ANALYZE to optimize execution paths.`;
     } else if (qLower.includes('python') || qLower.includes('fastapi') || qLower.includes('django') || qLower.includes('asr')) {
-      dynamicAnswer = `Direct Answer: Python is ideal for high-throughput AI microservices and asynchronous APIs using FastAPI, PyTorch, and CUDA/CPU INT8 quantization engines.
-
-Key Talking Points:
-• Async Concurrency: Explain FastAPI's ASGI event loop and async/await syntax for non-blocking IO.
-• AI/ML Pipeline: Discuss model deployment, ONNX Runtime optimizations, and faster-whisper CTranslate2 execution.
-• Production Standards: Mention type hints (Pydantic), uvicorn worker management, and containerization with Docker.`;
+      dynamicAnswer = `Python is an ideal language for AI microservices and asynchronous web backends when paired with frameworks like FastAPI and PyTorch. The main idea is that FastAPI leverages Python's async event loop to handle non-blocking IO operations with high concurrency. For example, deploying quantized speech models with ONNX Runtime allows serving real-time transcription requests in under 100 milliseconds. One trade-off to keep in mind is Python's GIL for heavy multi-threaded CPU tasks, which in practice I handle by scaling out worker processes with Uvicorn.`;
     } else {
-      dynamicAnswer = `Direct Answer: Address "${promptText.trim()}" by highlighting your hands-on engineering experience, architecture decisions, and measurable outcomes.
-
-Key Talking Points:
-• Core Concept: Define the fundamental principles behind ${promptText.trim().replace(/[?.]/g, '')} and its trade-offs.
-• Practical Application: Discuss how you implemented and scaled this in production environments.
-• Best Practices: Emphasize testing, monitoring, error resilience, and performance optimization.`;
+      dynamicAnswer = `When addressing ${promptText.trim().replace(/[?.]/g, '')}, the main idea is to balance core architectural simplicity with high performance and long-term reliability. In practice, I start by evaluating the primary trade-offs before choosing the implementation details. For example, if I'm building a scalable service, I focus on clean component boundaries, plain English reasoning, and robust error handling. One thing to keep in mind is monitoring system bottlenecks early so the implementation scales gracefully under heavy load.`;
     }
 
     const fallbackText = `[${selectedModel.toUpperCase()} Response]: ${dynamicAnswer}\n\n💡 Tip: To enable external cloud AI streaming, save a valid API key (Gemini, Groq, or OpenRouter) in backend-gateway/.env or Settings.`;

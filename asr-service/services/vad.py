@@ -35,3 +35,9 @@ class VoiceActivityDetector:
         Returns True when consecutive silence frames indicate speech paused/completed
         """
         return self.consecutive_silence >= self.silence_duration_frames
+
+    def reset(self):
+        """
+        Resets consecutive silence tracking counter
+        """
+        self.consecutive_silence = 0
