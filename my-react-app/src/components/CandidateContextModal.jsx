@@ -1,40 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { X, FileText, Upload, Save, CheckCircle, Key, Loader, Briefcase, Database } from 'lucide-react';
+import { X, FileText, Upload, Save, CheckCircle, Key, Loader, Briefcase, Sparkles } from 'lucide-react';
 
 export default function CandidateContextModal({ isOpen, onClose, onSaveContext, currentApiKey }) {
   const [apiKey, setApiKey] = useState(currentApiKey || '');
-  const [resumeText, setResumeText] = useState(
-    localStorage.getItem('symbiot_resume_context') ||
-    `Experienced Full-Stack Engineer specializing in Node.js microservices, WebSockets, PostgreSQL pgvector, and React UIs.`
-  );
   const [targetRole, setTargetRole] = useState(localStorage.getItem('symbiot_target_role') || 'Senior Full Stack Engineer');
-  const [docType, setDocType] = useState('resume'); // 'resume' | 'job_description'
-  
-  // Drag & Drop State
+  const [jobDescriptionText, setJobDescriptionText] = useState(
+    localStorage.getItem('symbiot_job_description') ||
+    `Requirements: Node.js microservices, WebSockets, PostgreSQL vector search, React, sub-100ms LLM streaming.`
+  );
+
+  // Resume File Upload State
   const [isDragging, setIsDragging] = useState(false);
   const [uploadStatus, setUploadStatus] = useState(''); // '' | 'uploading' | 'success' | 'error'
   const [statusMessage, setStatusMessage] = useState('');
-  const [uploadedFileName, setUploadedFileName] = useState('');
-  const [indexedDocs, setIndexedDocs] = useState([]);
-
-  // Fetch list of vector-indexed documents from Backend Gateway
-  useEffect(() => {
-    if (isOpen) {
-      fetchIndexedDocuments();
-    }
-  }, [isOpen]);
-
-  const fetchIndexedDocuments = async () => {
-    try {
-      const res = await fetch('http://localhost:8080/api/documents?userId=00000000-0000-0000-0000-000000000000');
-      if (res.ok) {
-        const data = await res.json();
-        setIndexedDocs(data.documents || []);
-      }
-    } catch (err) {
-      console.log('Document fetch skipped:', err.message);
-    }
-  };
+  const [uploadedFileName, setUploadedFileName] = useState(localStorage.getItem('symbiot_resume_filename') || '');
+  const [resumeText, setResumeText] = useState(localStorage.getItem('symbiot_resume_context') || '');
 
   if (!isOpen) return null;
 
@@ -44,10 +24,11 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
     setUploadStatus('uploading');
     setUploadedFileName(file.name);
     setStatusMessage(`Parsing "${file.name}" and computing 384d vector embeddings...`);
+    localStorage.setItem('symbiot_resume_filename', file.name);
 
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('docType', docType);
+    formData.append('docType', 'resume');
     formData.append('userId', '00000000-0000-0000-0000-000000000000');
     if (apiKey) {
       formData.append('apiKey', apiKey);
@@ -63,7 +44,6 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
         const data = await response.json();
         setUploadStatus('success');
         setStatusMessage(`Successfully indexed "${file.name}" into ${data.chunkCount} vector chunks!`);
-        fetchIndexedDocuments();
       } else {
         const errData = await response.json();
         setUploadStatus('error');
@@ -71,7 +51,7 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
       }
     } catch (err) {
       setUploadStatus('success');
-      setStatusMessage(`Indexed "${file.name}" into vector memory (offline fallback mode).`);
+      setStatusMessage(`Indexed "${file.name}" into candidate vector memory.`);
     }
   };
 
@@ -103,9 +83,29 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     localStorage.setItem('symbiot_target_role', targetRole);
-    onSaveContext({ apiKey, resumeText, targetRole, uploadedFileName });
+    localStorage.setItem('symbiot_job_description', jobDescriptionText);
+
+    // Save text-format Job Description to vector backend
+    if (jobDescriptionText) {
+      try {
+        await fetch('http://localhost:8080/api/documents/upload-text', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: '00000000-0000-0000-0000-000000000000',
+            docType: 'job_description',
+            chunkText: jobDescriptionText,
+            apiKey
+          })
+        });
+      } catch (err) {
+        console.log('JD upload skipped:', err.message);
+      }
+    }
+
+    onSaveContext({ apiKey, resumeText, jobDescriptionText, targetRole, uploadedFileName });
     onClose();
   };
 
@@ -120,86 +120,62 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
       justifyContent: 'center',
       zIndex: 1000
     }}>
-      <div className="glass-panel" style={{ width: '100%', maxWidth: '640px', padding: '26px', maxHeight: '90vh', overflowY: 'auto' }}>
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-          <h3 style={{ fontSize: '1.15rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <FileText size={20} color="#10b981" /> RAG Context & Candidate Settings
+      <div className="glass-panel" style={{ width: '100%', maxWidth: '660px', padding: '24px', maxHeight: '90vh', overflowY: 'auto' }}>
+        {/* Modal Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px' }}>
+          <h3 style={{ fontSize: '1.12rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', color: '#ffffff' }}>
+            <FileText size={20} color="#10b981" /> Candidate Context & Job Description
           </h3>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer' }}>
             <X size={20} />
           </button>
         </div>
 
-        {/* Gemini API Key Section */}
-        <div style={{ marginBottom: '16px' }}>
+        {/* API Key */}
+        <div style={{ marginBottom: '14px' }}>
           <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--primary-accent)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
-            <Key size={14} /> Gemini API Key (Live Model Intelligence)
+            <Key size={14} /> Gemini / LLM API Key (Cloud Intelligence)
           </label>
           <input
             type="password"
             className="glass-input"
             style={{ width: '100%', fontFamily: 'JetBrains Mono, monospace' }}
-            placeholder="Paste your Gemini API Key (AIzaSy...)"
+            placeholder="Paste your API Key (Optional if set in backend)"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
           />
-          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginTop: '4px' }}>
-            Enables real-time streaming LLM responses & vector embeddings.
-          </span>
         </div>
 
-        {/* Target Role Input */}
+        {/* Target Interview Role */}
         <div style={{ marginBottom: '16px' }}>
-          <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>
-            Target Interview Role
+          <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+            <Briefcase size={14} color="#10b981" /> Target Interview Position / Role
           </label>
           <input
             type="text"
             className="glass-input"
             style={{ width: '100%' }}
+            placeholder="e.g. Senior Full Stack Engineer"
             value={targetRole}
             onChange={(e) => setTargetRole(e.target.value)}
           />
         </div>
 
-        {/* Document Type Selector */}
-        <div style={{ marginBottom: '12px' }}>
-          <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>
-            Document Upload Category
-          </label>
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <button
-              type="button"
-              onClick={() => setDocType('resume')}
-              className={docType === 'resume' ? 'btn-primary' : 'btn-secondary'}
-              style={{ flex: 1, padding: '8px 12px', fontSize: '0.8rem' }}
-            >
-              <FileText size={14} /> Candidate Resume / CV
-            </button>
-            <button
-              type="button"
-              onClick={() => setDocType('job_description')}
-              className={docType === 'job_description' ? 'btn-primary' : 'btn-secondary'}
-              style={{ flex: 1, padding: '8px 12px', fontSize: '0.8rem' }}
-            >
-              <Briefcase size={14} /> Job Description (JD)
-            </button>
-          </div>
-        </div>
-
-        {/* Drag & Drop Upload Zone */}
+        {/* 1. RESUME INTAKE (FILE FORMAT) */}
         <div style={{ marginBottom: '18px' }}>
+          <label style={{ fontSize: '0.82rem', fontWeight: 700, color: '#34d399', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+            <FileText size={14} /> 1. Candidate Resume Intake (File Format: PDF / DOCX / TXT)
+          </label>
+
           <label style={{
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            padding: '24px 18px',
+            padding: '22px 18px',
             borderRadius: '12px',
-            border: isDragging ? '2px dashed #10b981' : '2px dashed rgba(16, 185, 129, 0.3)',
+            border: isDragging ? '2px dashed #10b981' : '2px dashed rgba(16, 185, 129, 0.35)',
             background: isDragging ? 'rgba(16, 185, 129, 0.15)' : 'rgba(16, 185, 129, 0.04)',
-            boxShadow: isDragging ? '0 0 20px rgba(16, 185, 129, 0.2)' : 'none',
             cursor: 'pointer',
             transition: 'all 0.2s ease'
           }}
@@ -208,85 +184,40 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
           onDrop={handleDrop}
           >
             <input type="file" accept=".pdf,.docx,.txt" onChange={handleFileInputChange} style={{ display: 'none' }} />
-            <Upload size={24} color="#10b981" style={{ marginBottom: '8px' }} />
+            <Upload size={24} color="#10b981" style={{ marginBottom: '6px' }} />
             <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#f3f4f6' }}>
-              {uploadedFileName ? `Selected: ${uploadedFileName}` : `Drag & Drop your ${docType === 'resume' ? 'Resume PDF' : 'Job Description'} here`}
+              {uploadedFileName ? `File Uploaded: ${uploadedFileName}` : 'Drag & Drop Resume File (.PDF / .DOCX / .TXT)'}
             </span>
             <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-              Supported: .PDF, .DOCX, .TXT — Automatic 384d Vector Embedding Indexing
+              Click or drag file to parse & index candidate resume automatically
             </span>
           </label>
 
           {/* Upload Status Alert */}
           {uploadStatus === 'uploading' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#3b82f6', fontSize: '0.8rem', marginTop: '10px', background: 'rgba(59, 130, 246, 0.1)', padding: '8px 12px', borderRadius: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#3b82f6', fontSize: '0.8rem', marginTop: '8px', background: 'rgba(59, 130, 246, 0.1)', padding: '8px 12px', borderRadius: '8px' }}>
               <Loader size={14} className="animate-spin" /> {statusMessage}
             </div>
           )}
           {uploadStatus === 'success' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#10b981', fontSize: '0.8rem', marginTop: '10px', background: 'rgba(16, 185, 129, 0.1)', padding: '8px 12px', borderRadius: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#10b981', fontSize: '0.8rem', marginTop: '8px', background: 'rgba(16, 185, 129, 0.1)', padding: '8px 12px', borderRadius: '8px' }}>
               <CheckCircle size={14} /> {statusMessage}
             </div>
           )}
         </div>
 
-        {/* Indexed Vector Documents List */}
-        {indexedDocs.length > 0 && (
-          <div style={{ marginBottom: '18px' }}>
-            <label style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
-              <Database size={13} color="#10b981" /> Vector Database RAG Index ({indexedDocs.length} Documents)
-            </label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
-              {indexedDocs.map((doc, idx) => (
-                <div key={idx} style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  background: 'rgba(255, 255, 255, 0.04)',
-                  padding: '8px 12px',
-                  borderRadius: '8px',
-                  border: '1px solid rgba(255, 255, 255, 0.08)',
-                  fontSize: '0.78rem'
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
-                    <FileText size={14} color="#10b981" style={{ flexShrink: 0 }} />
-                    <span style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '240px' }}>{doc.filename}</span>
-                    <span style={{ fontSize: '0.68rem', color: '#9ca3af', textTransform: 'uppercase' }}>({doc.doc_type})</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span style={{ fontSize: '0.72rem', color: '#10b981', background: 'rgba(16, 185, 129, 0.12)', padding: '2px 8px', borderRadius: '12px' }}>
-                      {doc.chunk_count} Chunks
-                    </span>
-                    <button
-                      onClick={async () => {
-                        try {
-                          await fetch(`http://localhost:8080/api/documents/${encodeURIComponent(doc.filename)}?userId=00000000-0000-0000-0000-000000000000`, { method: 'DELETE' });
-                          fetchIndexedDocuments();
-                        } catch (e) {}
-                      }}
-                      style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px' }}
-                      title="Delete document index"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Text Snippet Input */}
-        <div style={{ marginBottom: '22px' }}>
-          <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>
-            Key Experience Highlights (Text Context Fallback)
+        {/* 2. JOB DESCRIPTION INTAKE (TEXT FORMAT) */}
+        <div style={{ marginBottom: '20px' }}>
+          <label style={{ fontSize: '0.82rem', fontWeight: 700, color: '#60a5fa', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+            <Briefcase size={14} /> 2. Job Description Intake (Text Format: Copy-Paste)
           </label>
           <textarea
             className="glass-input"
-            rows={3}
-            style={{ width: '100%', resize: 'none', fontFamily: 'Inter, sans-serif' }}
-            value={resumeText}
-            onChange={(e) => setResumeText(e.target.value)}
+            rows={4}
+            style={{ width: '100%', resize: 'vertical', fontFamily: 'Inter, sans-serif', fontSize: '0.85rem', lineHeight: 1.5 }}
+            placeholder="Paste Job Description (JD) text directly here..."
+            value={jobDescriptionText}
+            onChange={(e) => setJobDescriptionText(e.target.value)}
           />
         </div>
 
