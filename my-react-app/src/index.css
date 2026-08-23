@@ -98,6 +98,7 @@ html, body {
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -105,4 +106,35 @@ html, body {
 ::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.15);
   border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(16, 185, 129, 0.5);
+}
+
+/* Responsive Master Stage Layout Grid */
+.main-stage-grid {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 12px;
+  align-items: stretch;
+  width: 100%;
+}
+
+.main-stage-grid.stealth {
+  grid-template-columns: 1fr !important;
+}
+
+@media (max-width: 880px) {
+  .main-stage-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .glass-panel {
+    border-radius: 12px;
+  }
+  .hide-mobile {
+    display: none !important;
+  }
 }

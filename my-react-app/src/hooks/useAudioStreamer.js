@@ -13,6 +13,11 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
   const mediaStreamRef = useRef(null);
   const processorRef = useRef(null);
 
+  const onTranscriptRef = useRef(onTranscriptReceived);
+  useEffect(() => {
+    onTranscriptRef.current = onTranscriptReceived;
+  }, [onTranscriptReceived]);
+
   // Initialize WebSocket connection to ASR Microservice
   const connectAsrSocket = useCallback(() => {
     try {
@@ -28,8 +33,8 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
           const data = JSON.parse(event.data);
           if (data.type === 'transcript_chunk' && data.text) {
             setLiveTranscript(data.text);
-            if (onTranscriptReceived) {
-              onTranscriptReceived(data.text);
+            if (onTranscriptRef.current) {
+              onTranscriptRef.current(data.text, data.speaker || 'interviewer', data.engine || 'whisper');
             }
           }
         } catch (err) {
@@ -47,7 +52,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     } catch (e) {
       console.warn('[ASR Streamer] Could not connect to ASR WS:', e);
     }
-  }, [asrWsUrl, onTranscriptReceived]);
+  }, [asrWsUrl]);
 
   useEffect(() => {
     connectAsrSocket();
@@ -118,10 +123,14 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
         const level = Math.min(100, Math.floor(rms * 500));
         setAudioLevel(level);
 
-        // Send binary PCM chunk over WebSocket if open
+        // Send binary PCM chunk over WebSocket with channel prefix byte
         if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
           const pcmData = convertFloat32ToInt16(inputData);
-          socketRef.current.send(pcmData);
+          const channelByte = activeSpeakerRef.current === 'applicant' ? 0x02 : 0x01;
+          const framedBuffer = new Uint8Array(1 + pcmData.byteLength);
+          framedBuffer[0] = channelByte;
+          framedBuffer.set(new Uint8Array(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength), 1);
+          socketRef.current.send(framedBuffer);
         }
       };
 
@@ -201,6 +210,28 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     console.log('[ASR Streamer] Live mic streaming stopped');
   };
 
+  const [activeSpeaker, setActiveSpeaker] = useState('interviewer');
+  const activeSpeakerRef = useRef(activeSpeaker);
+  useEffect(() => {
+    activeSpeakerRef.current = activeSpeaker;
+  }, [activeSpeaker]);
+
+  const switchSpeaker = (speaker) => {
+    setActiveSpeaker(speaker);
+    activeSpeakerRef.current = speaker;
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: 'set_speaker', speaker }));
+      console.log(`[ASR Streamer] Switched active speaker to: ${speaker}`);
+    }
+  };
+
+  const resetAsrBuffer = () => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: 'reset_buffer' }));
+      console.log('[ASR Streamer] ⚡ Sent reset_buffer signal to ASR service');
+    }
+  };
+
   return {
     isStreaming,
     startStreaming,
@@ -208,5 +239,8 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     liveTranscript,
     audioLevel,
     micError,
+    activeSpeaker,
+    switchSpeaker,
+    resetAsrBuffer,
   };
 }

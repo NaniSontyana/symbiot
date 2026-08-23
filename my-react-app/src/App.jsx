@@ -55,6 +55,8 @@ export default function App() {
     }
   };
 
+  const switchSpeakerRef = useRef(null);
+
   // Trigger real-time question generation to Copilot engine
   const handleAskQuestion = useCallback((questionStr) => {
     const query = questionStr || customQuestion;
@@ -69,38 +71,89 @@ export default function App() {
     setIsGenerating(true);
     setLatencyMs(Math.floor(Math.random() * 40) + 160);
 
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(
-        JSON.stringify({
-          type: 'transcript_question',
-          questionText: query,
-          userId: '00000000-0000-0000-0000-000000000000',
-          apiKey: apiKey || null,
-          resumeContext: candidateContext,
-          selectedModel: selectedModel
-        })
-      );
-    } else {
-      setTimeout(() => {
-        setResponseText(
-          `[${selectedModel.toUpperCase()} Response]: Direct Answer: Based on your resume experience, emphasize your background building distributed Node.js systems, real-time WebSockets, and database vector search.\n\nKey Talking Points:\n• Scalability: Discuss how you decoupled microservice endpoints for high throughput.\n• Technical Mastery: Mention your hands-on work with PostgreSQL pgvector and low-latency API gateways.`
+    // Automatically switch to Applicant mode while answer is being delivered
+    if (switchSpeakerRef.current) {
+      switchSpeakerRef.current('applicant');
+    }
+
+    const sendPayload = () => {
+      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+        socketRef.current.send(
+          JSON.stringify({
+            type: 'transcript_question',
+            questionText: query,
+            userId: '00000000-0000-0000-0000-000000000000',
+            apiKey: apiKey || null,
+            resumeContext: candidateContext || null,
+            selectedModel: selectedModel || 'gemini-1.5-flash',
+          })
         );
-        setIsGenerating(false);
-      }, 300);
+      }
+    };
+
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      sendPayload();
+    } else {
+      console.warn('[Copilot WS] Gateway WebSocket disconnected. Reconnecting...');
+      const newWs = new WebSocket('ws://localhost:5000/ws/copilot');
+      socketRef.current = newWs;
+      newWs.onopen = () => {
+        setIsConnected(true);
+        sendPayload();
+      };
+      newWs.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'start_generating') {
+            setIsGenerating(true);
+            setResponseText('');
+          } else if (data.type === 'token_delta') {
+            setResponseText((prev) => prev + data.token);
+          } else if (data.type === 'end_generating') {
+            setIsGenerating(false);
+            if (resetAsrBufferRef.current) resetAsrBufferRef.current();
+            // Automatically switch back to Interviewer listening mode after answer is read
+            setTimeout(() => {
+              if (switchSpeakerRef.current) switchSpeakerRef.current('interviewer');
+            }, 4000);
+          }
+        } catch (e) {}
+      };
     }
 
     setCustomQuestion('');
   }, [customQuestion, apiKey, candidateContext, selectedModel, isCollapsed]);
 
+  const handleAskQuestionRef = useRef(handleAskQuestion);
+  useEffect(() => {
+    handleAskQuestionRef.current = handleAskQuestion;
+  }, [handleAskQuestion]);
+
   // Audio streamer hook for direct mic ASR connection
-  const { isStreaming, startStreaming, stopStreaming, liveTranscript, audioLevel, micError } = useAudioStreamer(
+  const { isStreaming, startStreaming, stopStreaming, liveTranscript, audioLevel, micError, activeSpeaker, switchSpeaker, resetAsrBuffer } = useAudioStreamer(
     'ws://localhost:8000/ws/transcribe',
-    (detectedText) => {
+    (detectedText, speaker) => {
       if (detectedText) {
-        handleAskQuestion(detectedText);
+        if (!speaker || speaker === 'interviewer') {
+          console.log(`[Interviewer Question Detected]: "${detectedText}"`);
+          if (handleAskQuestionRef.current) {
+            handleAskQuestionRef.current(detectedText);
+          }
+        } else {
+          console.log(`[Applicant Speech Ignored for Question Trigger]: "${detectedText}"`);
+        }
       }
     }
   );
+
+  useEffect(() => {
+    switchSpeakerRef.current = switchSpeaker;
+  }, [switchSpeaker]);
+
+  const resetAsrBufferRef = useRef(resetAsrBuffer);
+  useEffect(() => {
+    resetAsrBufferRef.current = resetAsrBuffer;
+  }, [resetAsrBuffer]);
 
   const handleToggleMic = () => {
     if (isStreaming) {
@@ -141,6 +194,7 @@ export default function App() {
           setResponseText((prev) => prev + data.token);
         } else if (data.type === 'end_generating') {
           setIsGenerating(false);
+          if (resetAsrBufferRef.current) resetAsrBufferRef.current();
         }
       } catch (err) {
         console.error('[Copilot WS] Parse error:', err);
@@ -179,15 +233,16 @@ export default function App() {
           stealthMode={stealthMode}
         />
       ) : (
-        /* Expanded View: Full Copilot Application */
+        /* Expanded View: Teleprompter Eye-Level Optimized Layout */
         <div style={{
-          maxWidth: stealthMode ? '680px' : '1100px',
+          maxWidth: stealthMode ? '680px' : '1000px',
           width: '100%',
           margin: '0 auto',
-          padding: '20px',
+          padding: '10px 14px',
           opacity: opacity,
           transition: 'opacity 0.2s ease, max-width 0.3s ease'
         }}>
+          {/* 1. FIRST SECTION: MAIN HEADER */}
           <Header
             isConnected={isConnected}
             stealthMode={stealthMode}
@@ -197,7 +252,8 @@ export default function App() {
             onExitApp={handleExitApp}
           />
 
-          <div style={{ marginBottom: '20px' }}>
+          {/* 2. SECOND SECTION: MIC & AI MODEL CONTROLS */}
+          <div style={{ marginBottom: '12px' }}>
             <AudioVisualizer
               isStreaming={isStreaming}
               onToggleMic={handleToggleMic}
@@ -210,11 +266,13 @@ export default function App() {
               setOpacity={setOpacity}
               bgMode={bgMode}
               setBgMode={setBgMode}
+              activeSpeaker={activeSpeaker}
+              onSwitchSpeaker={switchSpeaker}
             />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: stealthMode ? '1fr' : '1fr 340px', gap: '20px', alignItems: 'start' }}>
-            {/* Main Copilot Response View */}
+          {/* 3. THIRD SECTION: MAIN EYE-LEVEL TELEPROMPTER ANSWER STAGE & SIMULATOR */}
+          <div className={`main-stage-grid ${stealthMode ? 'stealth' : ''}`}>
             <CopilotAnswerCard
               activeQuestion={activeQuestion}
               responseText={responseText}
@@ -222,45 +280,38 @@ export default function App() {
               latencyMs={latencyMs}
             />
 
-            {/* Sidebar / Quick Question Feeder */}
             {!stealthMode && (
-              <div className="glass-panel" style={{ padding: '20px' }}>
-                <h3 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <HelpCircle size={16} color="#10b981" /> Question Feeder Simulator
+              <div className="glass-panel" style={{ padding: '14px' }}>
+                <h3 style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <HelpCircle size={14} color="#10b981" /> Question Simulator
                 </h3>
 
-                {/* Custom Input */}
-                <div style={{ display: 'flex', gap: '8px', marginBottom: '18px' }}>
+                <div style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
                   <input
                     type="text"
                     className="glass-input"
-                    style={{ flex: 1 }}
-                    placeholder="Type or simulate interviewer question..."
+                    style={{ flex: 1, padding: '8px 10px', fontSize: '0.85rem' }}
+                    placeholder="Type custom question..."
                     value={customQuestion}
                     onChange={(e) => setCustomQuestion(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleAskQuestion()}
                   />
-                  <button onClick={() => handleAskQuestion()} className="btn-primary" style={{ padding: '10px 14px' }}>
-                    <Send size={16} />
+                  <button onClick={() => handleAskQuestion()} className="btn-primary" style={{ padding: '8px 12px' }}>
+                    <Send size={14} />
                   </button>
                 </div>
 
                 {/* Preset Samples */}
-                <p style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '10px', textTransform: 'uppercase' }}>
-                  Sample Technical Questions
-                </p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
                   {SAMPLE_QUESTIONS.map((q, idx) => (
                     <button
                       key={idx}
                       onClick={() => handleAskQuestion(q)}
                       className="btn-secondary"
-                      style={{ justifyContent: 'flex-start', textAlign: 'left', fontSize: '0.8rem', padding: '10px 12px' }}
+                      style={{ fontSize: '0.75rem', padding: '6px 10px', whiteSpace: 'nowrap', flexShrink: 0 }}
                     >
-                      <Play size={12} color="#10b981" style={{ flexShrink: 0 }} />
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                        {q}
-                      </span>
+                      <Play size={11} color="#10b981" />
+                      <span>{q}</span>
                     </button>
                   ))}
                 </div>

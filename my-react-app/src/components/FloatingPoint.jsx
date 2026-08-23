@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { Cpu, Sparkles, ChevronDown, X } from 'lucide-react';
+import { Sparkles, ChevronDown, X } from 'lucide-react';
+import SymbiotLogo from './SymbiotLogo';
 
 export default function FloatingPoint({ onExpand, onExitApp, isGenerating, isStreaming, stealthMode }) {
   const [position, setPosition] = useState({ x: 24, y: 24 });
@@ -88,30 +89,14 @@ export default function FloatingPoint({ onExpand, onExitApp, isGenerating, isStr
       }}
       title="Single Click to open, Double Click to Exit/Close application, Drag to move"
     >
-      {/* Glowing CPU Logo Emblem (Invisible in Stealth / Optimized mode) */}
+      {/* Glowing Symbiot Logo Emblem */}
       {!stealthMode && (
-        <div style={{
-          width: '32px',
-          height: '32px',
-          borderRadius: '50%',
-          background: 'linear-gradient(135deg, #10b981 0%, #3b82f6 100%)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: '0 0 12px rgba(16, 185, 129, 0.5)',
-          pointerEvents: 'none'
-        }}>
-          {isGenerating ? (
-            <Sparkles size={18} color="#ffffff" className="animate-spin" />
-          ) : (
-            <Cpu size={18} color="#ffffff" />
-          )}
-        </div>
+        <SymbiotLogo size={28} />
       )}
 
       <div style={{ pointerEvents: 'none' }}>
-        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '6px' }}>
-          {stealthMode ? 'System Telemetry' : 'Symbiot AI'}
+        <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          Symbiot
           {isStreaming && (
             <span style={{
               width: '8px',

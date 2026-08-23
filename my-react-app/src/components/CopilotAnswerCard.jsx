@@ -1,7 +1,12 @@
 import React, { useState } from 'react';
-import { Zap, Copy, Check, Sparkles, Code, Terminal, MessageSquare } from 'lucide-react';
+import { Zap, Copy, Check, Sparkles, MessageSquare } from 'lucide-react';
 
-export default function CopilotAnswerCard({ activeQuestion, responseText, isGenerating, latencyMs }) {
+export default function CopilotAnswerCard({
+  activeQuestion,
+  responseText,
+  isGenerating,
+  latencyMs
+}) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
@@ -12,58 +17,74 @@ export default function CopilotAnswerCard({ activeQuestion, responseText, isGene
   };
 
   return (
-    <div className="glass-panel" style={{ padding: '24px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: '380px' }}>
-      {/* Question Banner */}
-      <div style={{ paddingBottom: '16px', borderBottom: '1px solid var(--panel-border)', marginBottom: '18px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <MessageSquare size={14} color="#10b981" /> Detected Question
+    <div
+      className="glass-panel"
+      style={{
+        padding: '18px 22px',
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: '280px',
+        boxShadow: '0 12px 40px rgba(0,0,0,0.45)',
+        position: 'relative'
+      }}
+    >
+      {/* Question Header Banner */}
+      <div style={{ paddingBottom: '10px', borderBottom: '1px solid rgba(255, 255, 255, 0.08)', marginBottom: '14px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+          <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <MessageSquare size={13} color="#10b981" /> DETECTED QUESTION
           </span>
 
-          <span style={{ fontSize: '0.75rem', background: 'rgba(16, 185, 129, 0.1)', color: '#10b981', padding: '2px 8px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <Zap size={12} /> Latency: {latencyMs || 180}ms
+          <span style={{ fontSize: '0.72rem', background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', padding: '2px 8px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}>
+            <Zap size={11} /> Latency: {latencyMs || 180}ms
           </span>
         </div>
 
-        <h2 style={{ fontSize: '1.1rem', fontWeight: 600, color: '#fff' }}>
-          {activeQuestion || 'Waiting for interviewer question...'}
+        <h2 style={{ fontSize: '1.08rem', fontWeight: 600, color: '#f3f4f6', margin: 0, lineHeight: 1.35 }}>
+          {activeQuestion || 'Listening for interviewer question...'}
         </h2>
       </div>
 
-      {/* Answer Output Stream */}
+      {/* Main Eye-Level Teleprompter Answer Output */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: responseText ? 'flex-start' : 'center' }}>
         {!responseText && !isGenerating ? (
-          <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px 20px' }}>
-            <Sparkles size={36} color="var(--primary-accent)" style={{ opacity: 0.6, marginBottom: '12px' }} />
-            <p style={{ fontSize: '0.95rem', fontWeight: 500 }}>Symbiot AI Copilot is Standing By</p>
-            <p style={{ fontSize: '0.8rem', marginTop: '4px' }}>Speak into your mic or select a sample question below to test live answer generation.</p>
+          <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 16px' }}>
+            <Sparkles size={36} color="#10b981" style={{ opacity: 0.85, marginBottom: '8px' }} />
+            <p style={{ fontSize: '1rem', fontWeight: 600, color: '#e5e7eb', margin: 0 }}>Copilot Teleprompter Ready</p>
+            <p style={{ fontSize: '0.82rem', color: '#9ca3af', marginTop: '4px', margin: 0 }}>Answers stream right here at eye-level with your webcam.</p>
           </div>
         ) : (
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#10b981', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Sparkles size={14} /> AI Suggested Response
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#34d399', display: 'flex', alignItems: 'center', gap: '6px', letterSpacing: '0.04em' }}>
+                <Sparkles size={13} /> LIVE TELEPROMPTER RESPONSE
               </span>
 
-              <button onClick={handleCopy} className="btn-secondary" style={{ padding: '4px 10px', fontSize: '0.75rem' }}>
-                {copied ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
+              <button onClick={handleCopy} className="btn-secondary" style={{ padding: '3px 8px', fontSize: '0.72rem' }}>
+                {copied ? <Check size={13} color="#10b981" /> : <Copy size={13} />}
                 {copied ? 'Copied' : 'Copy'}
               </button>
             </div>
 
             <div style={{
-              background: 'rgba(0, 0, 0, 0.3)',
-              padding: '16px',
-              borderRadius: '12px',
-              border: '1px solid rgba(255, 255, 255, 0.06)',
-              fontSize: '0.95rem',
-              lineHeight: 1.6,
+              background: 'rgba(5, 15, 25, 0.65)',
+              padding: '16px 20px',
+              borderRadius: '10px',
+              border: '1px solid rgba(16, 185, 129, 0.25)',
+              fontSize: 'clamp(0.95rem, 1vw + 0.6rem, 1.12rem)',
+              fontWeight: 500,
+              lineHeight: 1.65,
+              color: '#f9fafb',
               whiteSpace: 'pre-wrap',
-              fontFamily: 'Inter, sans-serif'
+              fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+              boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.5)',
+              maxHeight: 'calc(100vh - 220px)',
+              overflowY: 'auto'
             }}>
               {responseText}
               {isGenerating && (
-                <span style={{ display: 'inline-block', width: '8px', height: '16px', background: '#10b981', marginLeft: '4px', animation: 'pulse 1s infinite' }} />
+                <span style={{ display: 'inline-block', width: '8px', height: '18px', background: '#10b981', marginLeft: '6px', animation: 'pulse 0.8s infinite' }} />
               )}
             </div>
           </div>
