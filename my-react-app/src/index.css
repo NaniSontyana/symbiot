@@ -130,9 +130,18 @@ html, body {
   }
 }
 
+@media (max-width: 768px) {
+  .hotkey-legend-badge {
+    display: none !important;
+  }
+}
+
 @media (max-width: 640px) {
   .glass-panel {
     border-radius: 12px;
+  }
+  .btn-label-desktop {
+    display: none !important;
   }
   .hide-mobile {
     display: none !important;

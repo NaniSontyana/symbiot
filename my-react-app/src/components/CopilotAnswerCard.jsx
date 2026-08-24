@@ -51,8 +51,12 @@ export default function CopilotAnswerCard({
         {!responseText && !isGenerating ? (
           <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 16px' }}>
             <Sparkles size={36} color="#10b981" style={{ opacity: 0.85, marginBottom: '8px' }} />
-            <p style={{ fontSize: '1rem', fontWeight: 600, color: '#e5e7eb', margin: 0 }}>Copilot Teleprompter Ready</p>
-            <p style={{ fontSize: '0.82rem', color: '#9ca3af', marginTop: '4px', margin: 0 }}>Answers stream right here at eye-level with your webcam.</p>
+            <p style={{ fontSize: '1.05rem', fontWeight: 700, color: '#34d399', margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+              🎯 Resume & JD Analyzed — Ready for Questions
+            </p>
+            <p style={{ fontSize: '0.82rem', color: '#9ca3af', marginTop: '6px', margin: 0 }}>
+              AI Copilot is primed with your candidate background & vector RAG memory.
+            </p>
           </div>
         ) : (
           <div>

@@ -37,15 +37,27 @@ function createWindow() {
 app.whenReady().then(() => {
   createWindow();
 
+  let isClickThrough = false;
+
   // Global Keyboard Shortcuts
   globalShortcut.register('CommandOrControl+Alt+S', () => {
     if (mainWindow) {
       const isStealth = mainWindow.getBounds().width < 800;
-      if (isStealth) {
-        mainWindow.setSize(1100, 750);
-      } else {
+      const targetStealth = !isStealth;
+      if (targetStealth) {
         mainWindow.setSize(680, 500);
+      } else {
+        mainWindow.setSize(1100, 750);
       }
+      mainWindow.webContents.send('hotkey-toggle-stealth', targetStealth);
+    }
+  });
+
+  globalShortcut.register('CommandOrControl+Alt+C', () => {
+    if (mainWindow) {
+      isClickThrough = !isClickThrough;
+      mainWindow.setIgnoreMouseEvents(isClickThrough, { forward: true });
+      mainWindow.webContents.send('hotkey-toggle-clickthrough', isClickThrough);
     }
   });
 
@@ -53,8 +65,10 @@ app.whenReady().then(() => {
     if (mainWindow) {
       if (mainWindow.isVisible()) {
         mainWindow.hide();
+        mainWindow.webContents.send('hotkey-toggle-hide', true);
       } else {
         mainWindow.show();
+        mainWindow.webContents.send('hotkey-toggle-hide', false);
       }
     }
   });

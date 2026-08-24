@@ -31,9 +31,11 @@ export function setupCopilotWebSocket(server) {
         if (payload.type === 'transcript_question') {
           const { questionText, userId, apiKey, resumeContext, selectedModel } = payload;
           
-          const words = questionText ? questionText.trim().split(/\s+/) : [];
-          if (words.length < 2 && !questionText.includes('?')) {
-            console.log(`[Copilot WS] Skipped single-word filler speech noise: "${questionText}"`);
+          const lower = questionText ? questionText.toLowerCase().trim() : '';
+          const isQuestion = lower.endsWith('?') || ['what', 'how', 'why', 'can you', 'could you', 'explain', 'tell me', 'describe', 'difference', 'compare', 'where', 'when', 'which', 'would you'].some(w => lower.includes(w));
+          
+          if (!isQuestion && !questionText.includes('?')) {
+            console.log(`[Copilot WS] Ignored non-question candidate speech prose: "${questionText}"`);
             return;
           }
 

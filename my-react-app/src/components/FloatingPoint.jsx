@@ -69,22 +69,26 @@ export default function FloatingPoint({ onExpand, onExitApp, isGenerating, isStr
       onDoubleClick={handleDoubleClick}
       className="glass-panel"
       style={{
-        position: 'fixed',
-        left: `${position.x}px`,
-        top: `${position.y}px`,
+        position: window.electronAPI ? 'relative' : 'fixed',
+        left: window.electronAPI ? '0' : `${position.x}px`,
+        top: window.electronAPI ? '0' : `${position.y}px`,
+        width: window.electronAPI ? '100%' : 'auto',
+        height: window.electronAPI ? '100%' : 'auto',
         display: 'inline-flex',
         alignItems: 'center',
-        gap: '10px',
-        padding: '10px 16px',
-        borderRadius: '30px',
+        justifyContent: 'space-between',
+        gap: '8px',
+        padding: '8px 12px',
+        borderRadius: window.electronAPI ? '12px' : '30px',
         cursor: isDragging ? 'grabbing' : 'pointer',
         border: '1px solid rgba(16, 185, 129, 0.45)',
-        background: 'rgba(15, 23, 42, 0.85)',
+        background: 'rgba(15, 23, 42, 0.92)',
         boxShadow: isGenerating ? '0 0 25px rgba(16, 185, 129, 0.6)' : '0 10px 30px rgba(0, 0, 0, 0.5)',
         backdropFilter: 'blur(16px)',
         WebkitAppRegion: 'drag',
         zIndex: 9999,
         userSelect: 'none',
+        boxSizing: 'border-box',
         transition: isDragging ? 'none' : 'box-shadow 0.2s ease, transform 0.15s ease'
       }}
       title="Single Click to open, Double Click to Exit/Close application, Drag to move"

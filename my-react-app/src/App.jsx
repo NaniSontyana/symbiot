@@ -17,11 +17,30 @@ const SAMPLE_QUESTIONS = [
 export default function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [stealthMode, setStealthMode] = useState(false);
+  const [clickThrough, setClickThrough] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [opacity, setOpacity] = useState(0.85);
   const [bgMode, setBgMode] = useState('transparent');
   const [selectedModel, setSelectedModel] = useState('gemini-1.5-flash');
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // Subscribe to Electron global hotkeys (Alt+S, Alt+C, Alt+H)
+  useEffect(() => {
+    if (window.electronAPI) {
+      const unsubStealth = window.electronAPI.onHotkeyToggleStealth ? window.electronAPI.onHotkeyToggleStealth((isStealth) => {
+        setStealthMode(isStealth);
+      }) : null;
+
+      const unsubClickThrough = window.electronAPI.onHotkeyToggleClickThrough ? window.electronAPI.onHotkeyToggleClickThrough((isClickThrough) => {
+        setClickThrough(isClickThrough);
+      }) : null;
+
+      return () => {
+        if (unsubStealth) unsubStealth();
+        if (unsubClickThrough) unsubClickThrough();
+      };
+    }
+  }, []);
 
   // Candidate API Key & Resume Context state
   const [apiKey, setApiKey] = useState(localStorage.getItem('symbiot_gemini_key') || '');
@@ -95,7 +114,7 @@ export default function App() {
       sendPayload();
     } else {
       console.warn('[Copilot WS] Gateway WebSocket disconnected. Reconnecting...');
-      const newWs = new WebSocket('ws://localhost:5000/ws/copilot');
+      const newWs = new WebSocket('ws://localhost:8080/ws/copilot');
       socketRef.current = newWs;
       newWs.onopen = () => {
         setIsConnected(true);
@@ -134,13 +153,16 @@ export default function App() {
     'ws://localhost:8000/ws/transcribe',
     (detectedText, speaker) => {
       if (detectedText) {
-        if (!speaker || speaker === 'interviewer') {
+        const lower = detectedText.toLowerCase().trim();
+        const isQuestion = lower.endsWith('?') || ['what', 'how', 'why', 'can you', 'could you', 'explain', 'tell me', 'describe', 'difference', 'compare', 'where', 'when', 'which', 'would you'].some(w => lower.includes(w));
+
+        if ((!speaker || speaker === 'interviewer') && isQuestion) {
           console.log(`[Interviewer Question Detected]: "${detectedText}"`);
           if (handleAskQuestionRef.current) {
             handleAskQuestionRef.current(detectedText);
           }
         } else {
-          console.log(`[Applicant Speech Ignored for Question Trigger]: "${detectedText}"`);
+          console.log(`[Applicant/Prose Speech Ignored for Question Trigger]: "${detectedText}"`);
         }
       }
     }
@@ -168,15 +190,21 @@ export default function App() {
       setApiKey(data.apiKey);
       localStorage.setItem('symbiot_gemini_key', data.apiKey);
     }
-    if (data.resumeText) {
-      setCandidateContext(data.resumeText);
-      localStorage.setItem('symbiot_resume_context', data.resumeText);
-    }
+
+    const combinedContext = [
+      data.targetRole ? `[TARGET INTERVIEW ROLE]: ${data.targetRole}` : '',
+      data.jobDescriptionText ? `[JOB DESCRIPTION (JD)]:\n${data.jobDescriptionText}` : '',
+      data.resumeText ? `[CANDIDATE RESUME / HIGHLIGHTS]:\n${data.resumeText}` : '',
+      data.uploadedFileName ? `[RESUME FILE ATTACHED]: ${data.uploadedFileName}` : ''
+    ].filter(Boolean).join('\n\n');
+
+    setCandidateContext(combinedContext);
+    localStorage.setItem('symbiot_resume_context', combinedContext);
   };
 
   // Initialize WebSocket connection to Backend Gateway
   useEffect(() => {
-    const ws = new WebSocket('ws://localhost:5000/ws/copilot');
+    const ws = new WebSocket('ws://localhost:8080/ws/copilot');
     socketRef.current = ws;
 
     ws.onopen = () => {
@@ -247,6 +275,8 @@ export default function App() {
             isConnected={isConnected}
             stealthMode={stealthMode}
             setStealthMode={setStealthMode}
+            clickThrough={clickThrough}
+            setClickThrough={setClickThrough}
             onOpenSettings={() => setIsModalOpen(true)}
             onCollapse={() => handleToggleCollapse(true)}
             onExitApp={handleExitApp}

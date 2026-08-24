@@ -1,11 +1,13 @@
 import React from 'react';
-import { Shield, Wifi, WifiOff, Settings, Minimize2, X } from 'lucide-react';
+import { Shield, Wifi, WifiOff, Settings, Minimize2, X, MousePointerClick } from 'lucide-react';
 import SymbiotLogo from './SymbiotLogo';
 
 export default function Header({
   isConnected,
   stealthMode,
   setStealthMode,
+  clickThrough,
+  setClickThrough,
   onOpenSettings,
   onCollapse,
   onExitApp
@@ -26,8 +28,8 @@ export default function Header({
         boxSizing: 'border-box'
       }}
     >
-      {/* 1. Left Branding */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', WebkitAppRegion: 'drag' }}>
+      {/* 1. Left Branding & Hotkey Legend */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', WebkitAppRegion: 'drag' }}>
         <SymbiotLogo size={30} />
         <h1 style={{ fontSize: '1.08rem', fontWeight: 800, letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '6px', margin: 0, color: '#ffffff' }}>
           Symbiot
@@ -35,6 +37,22 @@ export default function Header({
             v2.0
           </span>
         </h1>
+
+        {/* Global Hotkeys Legend Badge */}
+        <div className="hotkey-legend-badge" style={{
+          fontSize: '0.66rem',
+          color: 'rgba(255, 255, 255, 0.5)',
+          background: 'rgba(255, 255, 255, 0.04)',
+          border: '1px solid rgba(255, 255, 255, 0.08)',
+          padding: '2px 8px',
+          borderRadius: '6px',
+          display: 'flex',
+          gap: '8px'
+        }}>
+          <span><strong style={{ color: '#34d399' }}>Alt+S</strong> Stealth</span>
+          <span><strong style={{ color: '#60a5fa' }}>Alt+C</strong> Pass-Through</span>
+          <span><strong style={{ color: '#f59e0b' }}>Alt+H</strong> Hide</span>
+        </div>
       </div>
 
       {/* 2. Right System Action Buttons */}
@@ -45,7 +63,7 @@ export default function Header({
           display: 'flex',
           alignItems: 'center',
           gap: '4px',
-          padding: '0 10px',
+          padding: '0 8px',
           borderRadius: '7px',
           background: isConnected ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
           border: isConnected ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
@@ -54,16 +72,45 @@ export default function Header({
           fontWeight: 600
         }}>
           {isConnected ? <Wifi size={13} /> : <WifiOff size={13} />}
-          {isConnected ? 'Online' : 'Offline'}
+          <span className="btn-label-desktop">{isConnected ? 'Online' : 'Offline'}</span>
         </div>
+
+        {/* Click-Through Mouse Pass-Through Toggle */}
+        <button
+          onClick={() => {
+            const nextVal = !clickThrough;
+            if (setClickThrough) setClickThrough(nextVal);
+            if (window.electronAPI && window.electronAPI.toggleClickThrough) {
+              window.electronAPI.toggleClickThrough(nextVal);
+            }
+          }}
+          className="btn-secondary"
+          title="Toggle Mouse Click-Through Pass-Through (Alt+C)"
+          style={{
+            height: '28px',
+            padding: '0 8px',
+            fontSize: '0.74rem',
+            borderRadius: '7px',
+            borderColor: clickThrough ? '#60a5fa' : 'var(--panel-border)',
+            color: clickThrough ? '#60a5fa' : 'var(--text-main)',
+            background: clickThrough ? 'rgba(96, 165, 250, 0.15)' : 'transparent',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px'
+          }}
+        >
+          <MousePointerClick size={13} />
+          <span className="btn-label-desktop">{clickThrough ? 'Pass-Through ON' : 'Pass-Through'}</span>
+        </button>
 
         {/* Stealth Overlay Toggle */}
         <button
           onClick={() => setStealthMode(!stealthMode)}
           className="btn-secondary"
+          title="Toggle Teleprompter Size (Alt+S)"
           style={{
             height: '28px',
-            padding: '0 10px',
+            padding: '0 8px',
             fontSize: '0.74rem',
             borderRadius: '7px',
             borderColor: stealthMode ? 'var(--primary-accent)' : 'var(--panel-border)',
@@ -74,13 +121,13 @@ export default function Header({
           }}
         >
           <Shield size={13} />
-          {stealthMode ? 'Stealth ON' : 'Standard'}
+          <span className="btn-label-desktop">{stealthMode ? 'Stealth ON' : 'Standard'}</span>
         </button>
 
         {/* Context Settings */}
-        <button onClick={onOpenSettings} className="btn-secondary" style={{ height: '28px', padding: '0 10px', fontSize: '0.74rem', borderRadius: '7px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <button onClick={onOpenSettings} className="btn-secondary" style={{ height: '28px', padding: '0 8px', fontSize: '0.74rem', borderRadius: '7px', display: 'flex', alignItems: 'center', gap: '4px' }}>
           <Settings size={13} />
-          Resume
+          <span className="btn-label-desktop">Resume</span>
         </button>
 
         {/* Collapse to Floating Point Button */}
