@@ -65,7 +65,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     };
   }, [connectAsrSocket]);
 
-  // Convert Float32 audio samples to Int16 PCM ArrayBuffer
+  // Convert Float32 audio samples to Int16 PCM Int16Array
   const convertFloat32ToInt16 = (buffer) => {
     let l = buffer.length;
     let buf = new Int16Array(l);
@@ -73,7 +73,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
       let s = Math.max(-1, Math.min(1, buffer[l]));
       buf[l] = s < 0 ? s * 0x8000 : s * 0x7fff;
     }
-    return buf.buffer;
+    return buf;
   };
 
   // Start real-time audio streaming from user microphone
@@ -123,13 +123,14 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
         const level = Math.min(100, Math.floor(rms * 500));
         setAudioLevel(level);
 
-        // Send binary PCM chunk over WebSocket with channel prefix byte
+        // Send binary PCM chunk over WebSocket with channel prefix byte (0x01 = Interviewer, 0x02 = Applicant)
         if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-          const pcmData = convertFloat32ToInt16(inputData);
+          const pcmInt16 = convertFloat32ToInt16(inputData);
+          const pcmBytes = new Uint8Array(pcmInt16.buffer);
           const channelByte = activeSpeakerRef.current === 'applicant' ? 0x02 : 0x01;
-          const framedBuffer = new Uint8Array(1 + pcmData.byteLength);
+          const framedBuffer = new Uint8Array(1 + pcmBytes.length);
           framedBuffer[0] = channelByte;
-          framedBuffer.set(new Uint8Array(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength), 1);
+          framedBuffer.set(pcmBytes, 1);
           socketRef.current.send(framedBuffer);
         }
       };

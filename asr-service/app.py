@@ -74,39 +74,29 @@ async def websocket_transcribe(websocket: WebSocket):
 
                 target_buffer = interviewer_buffer if channel == "interviewer" else applicant_buffer
 
+                # Always buffer incoming audio bytes to prevent audio loss
+                target_buffer.extend(chunk_bytes)
+
                 # Evaluate Voice Activity Detection (VAD)
                 has_speech = vad.is_speech(chunk_bytes)
-                if has_speech:
-                    target_buffer.extend(chunk_bytes)
-                    if len(target_buffer) >= 24000:
-                        res = transcriber.process_audio_buffer(bytes(target_buffer))
-                        transcript_text, engine_used = res if isinstance(res, tuple) else (res, "whisper")
-                        if transcript_text:
-                            logger.info(f"[ASR WS] Transcribed [{channel}] [{engine_used}]: '{transcript_text}'")
-                            await websocket.send_json({
-                                "type": "transcript_chunk",
-                                "text": transcript_text,
-                                "speaker": channel,
-                                "engine": engine_used,
-                                "is_final": True
-                            })
-                            target_buffer.clear()
-                        vad.reset()
-                else:
-                    if len(target_buffer) >= 6400 and vad.is_utterance_complete():
-                        res = transcriber.process_audio_buffer(bytes(target_buffer))
-                        transcript_text, engine_used = res if isinstance(res, tuple) else (res, "whisper")
-                        if transcript_text:
-                            logger.info(f"[ASR WS] Final utterance [{channel}] [{engine_used}]: '{transcript_text}'")
-                            await websocket.send_json({
-                                "type": "transcript_chunk",
-                                "text": transcript_text,
-                                "speaker": channel,
-                                "engine": engine_used,
-                                "is_final": True
-                            })
+                
+                # Transcribe if buffer has reached ~0.5s of speech or upon utterance pause
+                if (has_speech and len(target_buffer) >= 16000) or (len(target_buffer) >= 6400 and vad.is_utterance_complete()):
+                    res = transcriber.process_audio_buffer(bytes(target_buffer))
+                    transcript_text, engine_used = res if isinstance(res, tuple) else (res, "whisper")
+                    if transcript_text:
+                        logger.info(f"[ASR WS] Transcribed [{channel}] [{engine_used}]: '{transcript_text}'")
+                        await websocket.send_json({
+                            "type": "transcript_chunk",
+                            "text": transcript_text,
+                            "speaker": channel,
+                            "engine": engine_used,
+                            "is_final": True
+                        })
                         target_buffer.clear()
-                        vad.reset()
+                    elif len(target_buffer) >= 32000:
+                        target_buffer.clear()
+                    vad.reset()
             elif "text" in message and message["text"]:
                 try:
                     payload = json.loads(message["text"])

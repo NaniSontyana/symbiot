@@ -113,8 +113,8 @@ export default function App() {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       sendPayload();
     } else {
-      console.warn('[Copilot WS] Gateway WebSocket disconnected. Reconnecting...');
-      const newWs = new WebSocket('ws://localhost:8080/ws/copilot');
+      console.warn('[Copilot WS] Gateway WebSocket disconnected. Reconnecting to port 5000...');
+      const newWs = new WebSocket('ws://localhost:5000/ws/copilot');
       socketRef.current = newWs;
       newWs.onopen = () => {
         setIsConnected(true);
@@ -202,41 +202,58 @@ export default function App() {
     localStorage.setItem('symbiot_resume_context', combinedContext);
   };
 
-  // Initialize WebSocket connection to Backend Gateway
+  // Initialize WebSocket connection to Backend Gateway (Port 5000) with auto-reconnect
   useEffect(() => {
-    const ws = new WebSocket('ws://localhost:8080/ws/copilot');
-    socketRef.current = ws;
+    let timerId = null;
 
-    ws.onopen = () => {
-      console.log('[Copilot WS] Connected to Gateway');
-      setIsConnected(true);
-    };
-
-    ws.onmessage = (event) => {
+    const connectWs = () => {
       try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'start_generating') {
-          setIsGenerating(true);
-          setResponseText('');
-        } else if (data.type === 'token_delta') {
-          setResponseText((prev) => prev + data.token);
-        } else if (data.type === 'end_generating') {
-          setIsGenerating(false);
-          if (resetAsrBufferRef.current) resetAsrBufferRef.current();
-        }
+        const ws = new WebSocket('ws://localhost:5000/ws/copilot');
+        socketRef.current = ws;
+
+        ws.onopen = () => {
+          console.log('[Copilot WS] Connected to Gateway port 5000');
+          setIsConnected(true);
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'start_generating') {
+              setIsGenerating(true);
+              setResponseText('');
+            } else if (data.type === 'token_delta') {
+              setResponseText((prev) => prev + data.token);
+            } else if (data.type === 'end_generating') {
+              setIsGenerating(false);
+              if (resetAsrBufferRef.current) resetAsrBufferRef.current();
+            }
+          } catch (err) {
+            console.error('[Copilot WS] Parse error:', err);
+          }
+        };
+
+        ws.onclose = () => {
+          console.log('[Copilot WS] Disconnected. Retrying in 3s...');
+          setIsConnected(false);
+          timerId = setTimeout(connectWs, 3000);
+        };
+
+        ws.onerror = (err) => {
+          ws.close();
+        };
       } catch (err) {
-        console.error('[Copilot WS] Parse error:', err);
+        setIsConnected(false);
+        timerId = setTimeout(connectWs, 3000);
       }
     };
 
-    ws.onclose = () => {
-      console.log('[Copilot WS] Disconnected');
-      setIsConnected(false);
-    };
+    connectWs();
 
     return () => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.close();
+      if (timerId) clearTimeout(timerId);
+      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+        socketRef.current.close();
       }
     };
   }, []);
