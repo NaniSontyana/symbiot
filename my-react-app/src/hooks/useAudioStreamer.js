@@ -1,22 +1,68 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 /**
- * Custom React Hook for Real-Time Microphone Audio Capture & WebSocket Streaming
+ * Linear Interpolation Resampler: Float32 (inRate) -> Int16 PCM (16000 Hz)
+ */
+function resampleAndConvertToInt16(float32Array, inRate, outRate = 16000) {
+  if (inRate === outRate) {
+    const pcm = new Int16Array(float32Array.length);
+    for (let i = 0; i < float32Array.length; i++) {
+      const s = Math.max(-1, Math.min(1, float32Array[i]));
+      pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    return pcm.buffer;
+  }
+
+  const ratio = inRate / outRate;
+  const newLength = Math.round(float32Array.length / ratio);
+  const result = new Int16Array(newLength);
+
+  for (let i = 0; i < newLength; i++) {
+    const originPos = i * ratio;
+    const index = Math.floor(originPos);
+    const decimal = originPos - index;
+
+    const current = float32Array[index] || 0;
+    const next = float32Array[index + 1] !== undefined ? float32Array[index + 1] : current;
+
+    const interpolated = current + (next - current) * decimal;
+    const clamped = Math.max(-1, Math.min(1, interpolated));
+    result[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+  }
+
+  return result.buffer;
+}
+
+/**
+ * Custom React Hook for Real-Time Microphone & Desktop Audio Capture & WebSocket Streaming
  */
 export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isSystemAudioActive, setIsSystemAudioActive] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState('');
   const [audioLevel, setAudioLevel] = useState(0);
+  const [micError, setMicError] = useState(null);
 
   const socketRef = useRef(null);
   const audioCtxRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const processorRef = useRef(null);
+  const recognitionRef = useRef(null);
+
+  const systemStreamRef = useRef(null);
+  const systemAudioCtxRef = useRef(null);
+  const systemProcessorRef = useRef(null);
 
   const onTranscriptRef = useRef(onTranscriptReceived);
   useEffect(() => {
     onTranscriptRef.current = onTranscriptReceived;
   }, [onTranscriptReceived]);
+
+  const [activeSpeaker, setActiveSpeaker] = useState('interviewer');
+  const activeSpeakerRef = useRef(activeSpeaker);
+  useEffect(() => {
+    activeSpeakerRef.current = activeSpeaker;
+  }, [activeSpeaker]);
 
   // Initialize WebSocket connection to ASR Microservice
   const connectAsrSocket = useCallback(() => {
@@ -59,26 +105,12 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
 
     return () => {
       stopStreaming();
+      stopSystemAudioShare();
       if (socketRef.current) {
         socketRef.current.close();
       }
     };
   }, [connectAsrSocket]);
-
-  // Convert Float32 audio samples to Int16 PCM Int16Array
-  const convertFloat32ToInt16 = (buffer) => {
-    let l = buffer.length;
-    let buf = new Int16Array(l);
-    while (l--) {
-      let s = Math.max(-1, Math.min(1, buffer[l]));
-      buf[l] = s < 0 ? s * 0x8000 : s * 0x7fff;
-    }
-    return buf;
-  };
-
-  // Start real-time audio streaming from user microphone
-  const [micError, setMicError] = useState(null);
-  const recognitionRef = useRef(null);
 
   // Start real-time audio streaming from user microphone
   const startStreaming = async () => {
@@ -89,14 +121,13 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
-          sampleRate: 16000,
         },
       });
 
       mediaStreamRef.current = stream;
 
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      const audioCtx = new AudioCtx({ sampleRate: 16000 });
+      const audioCtx = new AudioCtx();
       audioCtxRef.current = audioCtx;
 
       if (audioCtx.state === 'suspended') {
@@ -104,42 +135,71 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
       }
 
       const source = audioCtx.createMediaStreamSource(stream);
-      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-      processorRef.current = processor;
-
-      // Dummy zero-gain node prevents audio feedback out of speakers
       const muteGain = audioCtx.createGain();
       muteGain.gain.value = 0;
 
-      processor.onaudioprocess = (e) => {
-        const inputData = e.inputBuffer.getChannelData(0);
+      // Try AudioWorklet first for glitch-free main-thread decoupled audio streaming
+      try {
+        await audioCtx.audioWorklet.addModule('/pcm-processor.js');
+        const workletNode = new AudioWorkletNode(audioCtx, 'pcm-processor');
+        processorRef.current = workletNode;
 
-        // Calculate RMS audio level for visualizer
-        let sum = 0;
-        for (let i = 0; i < inputData.length; i++) {
-          sum += inputData[i] * inputData[i];
-        }
-        const rms = Math.sqrt(sum / inputData.length);
-        const level = Math.min(100, Math.floor(rms * 500));
-        setAudioLevel(level);
+        workletNode.port.onmessage = (event) => {
+          if (event.data.type === 'pcm_data') {
+            setAudioLevel(event.data.audioLevel);
 
-        // Send binary PCM chunk over WebSocket with channel prefix byte (0x01 = Interviewer, 0x02 = Applicant)
-        if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-          const pcmInt16 = convertFloat32ToInt16(inputData);
-          const pcmBytes = new Uint8Array(pcmInt16.buffer);
-          const channelByte = activeSpeakerRef.current === 'applicant' ? 0x02 : 0x01;
-          const framedBuffer = new Uint8Array(1 + pcmBytes.length);
-          framedBuffer[0] = channelByte;
-          framedBuffer.set(pcmBytes, 1);
-          socketRef.current.send(framedBuffer);
-        }
-      };
+            if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+              const pcmBytes = new Uint8Array(event.data.pcmBuffer);
+              if (pcmBytes.byteLength > 0) {
+                const channelByte = activeSpeakerRef.current === 'applicant' ? 0x02 : 0x01;
+                const framedBuffer = new Uint8Array(1 + pcmBytes.byteLength);
+                framedBuffer[0] = channelByte;
+                framedBuffer.set(pcmBytes, 1);
+                socketRef.current.send(framedBuffer);
+              }
+            }
+          }
+        };
 
-      source.connect(processor);
-      processor.connect(muteGain);
-      muteGain.connect(audioCtx.destination);
+        source.connect(workletNode);
+        workletNode.connect(muteGain);
+        muteGain.connect(audioCtx.destination);
+        console.log('[ASR Streamer] AudioWorklet 16kHz resampler active');
+      } catch (workletErr) {
+        console.warn('[ASR Streamer] AudioWorklet fallback to ScriptProcessor:', workletErr.message);
+        const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+        processorRef.current = processor;
 
-      // Initialize WebSpeech SpeechRecognition fallback if available in browser/Electron
+        processor.onaudioprocess = (e) => {
+          const inputData = e.inputBuffer.getChannelData(0);
+
+          let sum = 0;
+          for (let i = 0; i < inputData.length; i++) {
+            sum += inputData[i] * inputData[i];
+          }
+          const rms = Math.sqrt(sum / inputData.length);
+          const level = Math.min(100, Math.floor(rms * 500));
+          setAudioLevel(level);
+
+          if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+            const pcmBuffer = resampleAndConvertToInt16(inputData, audioCtx.sampleRate, 16000);
+            const pcmBytes = new Uint8Array(pcmBuffer);
+            if (pcmBytes.byteLength > 0) {
+              const channelByte = activeSpeakerRef.current === 'applicant' ? 0x02 : 0x01;
+              const framedBuffer = new Uint8Array(1 + pcmBytes.byteLength);
+              framedBuffer[0] = channelByte;
+              framedBuffer.set(pcmBytes, 1);
+              socketRef.current.send(framedBuffer);
+            }
+          }
+        };
+
+        source.connect(processor);
+        processor.connect(muteGain);
+        muteGain.connect(audioCtx.destination);
+      }
+
+      // Initialize WebSpeech SpeechRecognition fallback if available
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (SpeechRecognition) {
         try {
@@ -159,39 +219,132 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
                 interim += transcriptText;
               }
             }
-            if (interim) {
-              setLiveTranscript(interim);
-            }
+            if (interim) setLiveTranscript(interim);
             if (final && final.trim()) {
               setLiveTranscript(final);
-              if (onTranscriptReceived) {
-                onTranscriptReceived(final);
+              if (onTranscriptRef.current) {
+                onTranscriptRef.current(final, activeSpeakerRef.current || 'interviewer');
               }
+            }
+          };
+
+          rec.onend = () => {
+            if (mediaStreamRef.current && recognitionRef.current) {
+              try { rec.start(); } catch (e) {}
             }
           };
 
           rec.start();
           recognitionRef.current = rec;
         } catch (recErr) {
-          console.log('[WebSpeech] SpeechRecognition init skipped:', recErr.message);
+          console.log('[WebSpeech] Init skipped:', recErr.message);
         }
       }
 
       setIsStreaming(true);
-      console.log('[ASR Streamer] Live mic streaming active');
+      console.log('[ASR Streamer] Live mic streaming active (16kHz resampled)');
     } catch (err) {
       console.error('[ASR Streamer] Microphone access error:', err);
-      setMicError(err.name === 'NotAllowedError' ? 'Microphone permission denied. Please allow mic access.' : err.message);
+      setMicError(err.name === 'NotAllowedError' ? 'Microphone permission denied.' : err.message);
       setIsStreaming(false);
     }
+  };
+
+  // Start capture of System Audio (Zoom, Meet, Browser Tab) for pure interviewer audio
+  const startSystemAudioShare = async () => {
+    try {
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
+
+      const audioTracks = displayStream.getAudioTracks();
+      if (audioTracks.length === 0) {
+        alert('No audio track selected! Please make sure to check "Share audio" when selecting tab or screen.');
+        displayStream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+
+      systemStreamRef.current = displayStream;
+
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const sysCtx = new AudioCtx();
+      systemAudioCtxRef.current = sysCtx;
+
+      if (sysCtx.state === 'suspended') {
+        await sysCtx.resume();
+      }
+
+      const sysSource = sysCtx.createMediaStreamSource(new MediaStream([audioTracks[0]]));
+      const sysProcessor = sysCtx.createScriptProcessor(4096, 1, 1);
+      systemProcessorRef.current = sysProcessor;
+
+      const sysMute = sysCtx.createGain();
+      sysMute.gain.value = 0;
+
+      sysProcessor.onaudioprocess = (e) => {
+        const inputData = e.inputBuffer.getChannelData(0);
+
+        let sum = 0;
+        for (let i = 0; i < inputData.length; i++) {
+          sum += inputData[i] * inputData[i];
+        }
+        const rms = Math.sqrt(sum / inputData.length);
+        const level = Math.min(100, Math.floor(rms * 500));
+        setAudioLevel(level);
+
+        if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+          const pcmBuffer = resampleAndConvertToInt16(inputData, sysCtx.sampleRate, 16000);
+          const pcmBytes = new Uint8Array(pcmBuffer);
+          if (pcmBytes.byteLength > 0) {
+            const framedBuffer = new Uint8Array(1 + pcmBytes.byteLength);
+            framedBuffer[0] = 0x01; // Channel 0x01 = Interviewer / System Audio
+            framedBuffer.set(pcmBytes, 1);
+            socketRef.current.send(framedBuffer);
+          }
+        }
+      };
+
+      sysSource.connect(sysProcessor);
+      sysProcessor.connect(sysMute);
+      sysMute.connect(sysCtx.destination);
+
+      audioTracks[0].onended = () => {
+        stopSystemAudioShare();
+      };
+
+      setIsSystemAudioActive(true);
+      console.log('[ASR Streamer] System Audio capture active (Interviewer Channel 0x01)');
+    } catch (err) {
+      console.error('[ASR Streamer] System Audio share error:', err);
+    }
+  };
+
+  const stopSystemAudioShare = () => {
+    if (systemProcessorRef.current) {
+      systemProcessorRef.current.disconnect();
+      systemProcessorRef.current = null;
+    }
+    if (systemAudioCtxRef.current) {
+      systemAudioCtxRef.current.close();
+      systemAudioCtxRef.current = null;
+    }
+    if (systemStreamRef.current) {
+      systemStreamRef.current.getTracks().forEach((track) => track.stop());
+      systemStreamRef.current = null;
+    }
+    setIsSystemAudioActive(false);
+    console.log('[ASR Streamer] System audio share stopped');
   };
 
   // Stop audio streaming
   const stopStreaming = () => {
     if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (e) {}
+      try { recognitionRef.current.stop(); } catch (e) {}
       recognitionRef.current = null;
     }
     if (processorRef.current) {
@@ -211,17 +364,13 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     console.log('[ASR Streamer] Live mic streaming stopped');
   };
 
-  const [activeSpeaker, setActiveSpeaker] = useState('interviewer');
-  const activeSpeakerRef = useRef(activeSpeaker);
-  useEffect(() => {
-    activeSpeakerRef.current = activeSpeaker;
-  }, [activeSpeaker]);
-
   const switchSpeaker = (speaker) => {
     setActiveSpeaker(speaker);
     activeSpeakerRef.current = speaker;
+    setLiveTranscript('');
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({ type: 'set_speaker', speaker }));
+      socketRef.current.send(JSON.stringify({ type: 'reset_buffer' }));
       console.log(`[ASR Streamer] Switched active speaker to: ${speaker}`);
     }
   };
@@ -229,7 +378,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
   const resetAsrBuffer = () => {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({ type: 'reset_buffer' }));
-      console.log('[ASR Streamer] ⚡ Sent reset_buffer signal to ASR service');
+      console.log('[ASR Streamer] Sent reset_buffer signal to ASR service');
     }
   };
 
@@ -237,6 +386,9 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     isStreaming,
     startStreaming,
     stopStreaming,
+    isSystemAudioActive,
+    startSystemAudioShare,
+    stopSystemAudioShare,
     liveTranscript,
     audioLevel,
     micError,

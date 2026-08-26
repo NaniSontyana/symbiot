@@ -84,26 +84,22 @@ ${userContext || 'Full-Stack Engineer experienced in Node.js, Python, PostgreSQL
 `;
 
   try {
-    // Handle OpenRouter keys (sk-or-v1-...) for any model including Gemini & GPT
-    const openRouterKey = process.env.OPENROUTER_API_KEY || (activeKey && activeKey.startsWith('sk-or-v1-') ? activeKey : null);
-    if (openRouterKey || selectedModel === 'openai/gpt-oss-120b' || selectedModel.includes('openrouter')) {
-      const orKey = openRouterKey || activeKey;
-      if (orKey && orKey.startsWith('sk-or-v1-')) {
-        let openRouterModel = 'openai/gpt-3.5-turbo';
-        if (selectedModel === 'gemini-1.5-flash' || selectedModel === 'gemini-2.0-flash') openRouterModel = 'openai/gpt-3.5-turbo';
-        if (selectedModel.includes('gpt-oss')) openRouterModel = 'openai/gpt-3.5-turbo';
+    // 1. Groq Cloud Models (Llama 3.3 70B, GPT-OSS 120B)
+    if (selectedModel.includes('groq') || selectedModel.includes('llama') || selectedModel.includes('gpt-oss')) {
+      const groqKey = process.env.GROQ_API_KEY || (activeKey && activeKey.startsWith('gsk_') ? activeKey : null);
+      if (groqKey && groqKey.startsWith('gsk_')) {
+        let groqModelName = 'llama-3.3-70b-versatile';
+        if (selectedModel.includes('gpt-oss')) groqModelName = 'llama-3.1-8b-instant';
 
-        console.log(`[LLM Router] Calling OpenRouter API for model: ${openRouterModel}`);
-        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        console.log(`[LLM Router] ⚡ Calling Groq Cloud API for model: ${groqModelName}`);
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${orKey}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'http://localhost:5000',
-            'X-Title': 'Symbiot AI Copilot'
+            'Authorization': `Bearer ${groqKey}`,
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            model: openRouterModel,
+            model: groqModelName,
             messages: [
               { role: 'system', content: systemInstruction },
               { role: 'user', content: `Interviewer Question: "${promptText}"` }
@@ -140,20 +136,23 @@ ${userContext || 'Full-Stack Engineer experienced in Node.js, Python, PostgreSQL
           return;
         }
       }
-    }// Handle Groq API requests (gsk_ keys)
-    const groqKey = process.env.GROQ_API_KEY || (activeKey && activeKey.startsWith('gsk_') ? activeKey : null);
-    if (groqKey || selectedModel.includes('groq') || selectedModel.includes('llama') || selectedModel.includes('oss')) {
-      const gKey = groqKey || activeKey;
-      if (gKey && gKey.startsWith('gsk_')) {
-        console.log(`[LLM Router] Calling Groq Cloud streaming API for GPT-OSS 120B...`);
-        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    }
+
+    // 2. OpenRouter Models (if explicitly selected or custom sk-or-v1 key provided)
+    if ((selectedModel.includes('openrouter') || selectedModel.includes('gpt-3.5')) && process.env.OPENROUTER_API_KEY) {
+      const orKey = process.env.OPENROUTER_API_KEY;
+      if (orKey && orKey.startsWith('sk-or-v1-')) {
+        console.log(`[LLM Router] Calling OpenRouter API for model: ${selectedModel}`);
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${gKey}`,
-            'Content-Type': 'application/json'
+            'Authorization': `Bearer ${orKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'http://localhost:5000',
+            'X-Title': 'Symbiot AI Copilot'
           },
           body: JSON.stringify({
-            model: 'openai/gpt-oss-120b',
+            model: 'openai/gpt-3.5-turbo',
             messages: [
               { role: 'system', content: systemInstruction },
               { role: 'user', content: `Interviewer Question: "${promptText}"` }
@@ -216,13 +215,13 @@ ${userContext || 'Full-Stack Engineer experienced in Node.js, Python, PostgreSQL
       }
     }
   } catch (err) {
-    console.warn('[LLM Router] Primary model error. Triggering instant failover to Groq Cloud GPT-OSS 120B...', err.message);
+    console.warn('[LLM Router] Primary model error. Triggering instant failover to Groq Cloud Llama 3.3 70B...', err.message);
     
-    // Failover Tier 1: Groq Cloud GPT-OSS 120B
+    // Failover Tier 1: Groq Cloud Llama 3.3 70B Versatile
     const groqKey = process.env.GROQ_API_KEY;
     if (groqKey && groqKey.startsWith('gsk_')) {
       try {
-        console.log('[LLM Router] ⚡ Failover active: Generating answer with Groq GPT-OSS 120B...');
+        console.log('[LLM Router] ⚡ Failover active: Generating streaming answer with Groq Llama 3.3 70B...');
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -230,21 +229,41 @@ ${userContext || 'Full-Stack Engineer experienced in Node.js, Python, PostgreSQL
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            model: 'openai/gpt-oss-120b',
+            model: 'llama-3.3-70b-versatile',
             messages: [
               { role: 'system', content: systemInstruction },
-              { role: 'user', content: promptText }
+              { role: 'user', content: `Interviewer Question: "${promptText}"` }
             ],
-            stream: false
+            stream: true
           })
         });
-        if (response.ok) {
-          const data = await response.json();
-          const groqText = data.choices?.[0]?.message?.content;
-          if (groqText) {
-            onChunk(groqText);
-            return;
+
+        if (response.ok && response.body) {
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder('utf-8');
+          let buffer = '';
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (trimmed.startsWith('data: ')) {
+                const jsonStr = trimmed.replace('data: ', '');
+                if (jsonStr === '[DONE]') break;
+                try {
+                  const parsed = JSON.parse(jsonStr);
+                  const content = parsed.choices?.[0]?.delta?.content;
+                  if (content) onChunk(content);
+                } catch (e) {}
+              }
+            }
           }
+          return;
         }
       } catch (groqErr) {
         console.warn('[Groq Failover Error]:', groqErr.message);

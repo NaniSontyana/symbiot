@@ -76,6 +76,45 @@ export default function App() {
 
   const switchSpeakerRef = useRef(null);
 
+  const [qaHistory, setQaHistory] = useState([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [screenshotAttached, setScreenshotAttached] = useState(false);
+  const inputRef = useRef(null);
+
+  const handlePrevHistory = useCallback(() => {
+    if (qaHistory.length === 0) return;
+    const newIdx = historyIndex <= 0 ? 0 : historyIndex - 1;
+    setHistoryIndex(newIdx);
+    setActiveQuestion(qaHistory[newIdx].question);
+    setResponseText(qaHistory[newIdx].response);
+  }, [qaHistory, historyIndex]);
+
+  const handleNextHistory = useCallback(() => {
+    if (qaHistory.length === 0) return;
+    const newIdx = historyIndex >= qaHistory.length - 1 ? qaHistory.length - 1 : historyIndex + 1;
+    setHistoryIndex(newIdx);
+    setActiveQuestion(qaHistory[newIdx].question);
+    setResponseText(qaHistory[newIdx].response);
+  }, [qaHistory, historyIndex]);
+
+  const handleFocusChat = useCallback(() => {
+    if (isCollapsed) handleToggleCollapse(false);
+    setTimeout(() => {
+      if (inputRef.current) inputRef.current.focus();
+    }, 100);
+  }, [isCollapsed]);
+
+  const handleTriggerScreenshot = useCallback(() => {
+    setScreenshotAttached(prev => !prev);
+    alert('Screen capture snippet attached for AI query!');
+  }, []);
+
+  const handleClearSession = useCallback(() => {
+    setActiveQuestion('');
+    setResponseText('');
+    setScreenshotAttached(false);
+  }, []);
+
   // Trigger real-time question generation to Copilot engine
   const handleAskQuestion = useCallback((questionStr) => {
     const query = questionStr || customQuestion;
@@ -131,7 +170,12 @@ export default function App() {
           } else if (data.type === 'end_generating') {
             setIsGenerating(false);
             if (resetAsrBufferRef.current) resetAsrBufferRef.current();
-            // Automatically switch back to Interviewer listening mode after answer is read
+            // Store in Q&A History
+            setQaHistory(prev => {
+              const updated = [...prev, { question: query, response: responseText }];
+              setHistoryIndex(updated.length - 1);
+              return updated;
+            });
             setTimeout(() => {
               if (switchSpeakerRef.current) switchSpeakerRef.current('interviewer');
             }, 4000);
@@ -141,7 +185,46 @@ export default function App() {
     }
 
     setCustomQuestion('');
-  }, [customQuestion, apiKey, candidateContext, selectedModel, isCollapsed]);
+  }, [customQuestion, apiKey, candidateContext, selectedModel, isCollapsed, responseText]);
+
+  // Global Keyboard Shortcuts Listener
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Alt + Enter -> Trigger Answer (⌘↵)
+      if (e.altKey && e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {
+        e.preventDefault();
+        handleAskQuestion();
+      }
+      // Alt + Shift + Enter -> Screenshot (⌘⇧↵)
+      else if (e.altKey && e.shiftKey && e.key === 'Enter') {
+        e.preventDefault();
+        handleTriggerScreenshot();
+      }
+      // Alt + Shift + U -> Focus Chat (⌘⇧_)
+      else if (e.altKey && e.shiftKey && (e.key === '_' || e.key === 'U' || e.key === 'u')) {
+        e.preventDefault();
+        handleFocusChat();
+      }
+      // Alt + Backspace -> Clear Session (⌘⌫)
+      else if (e.altKey && e.key === 'Backspace') {
+        e.preventDefault();
+        handleClearSession();
+      }
+      // Alt + LeftArrow -> Prev History (⌘←)
+      else if (e.altKey && e.key === 'ArrowLeft') {
+        e.preventDefault();
+        handlePrevHistory();
+      }
+      // Alt + RightArrow -> Next History (⌘→)
+      else if (e.altKey && e.key === 'ArrowRight') {
+        e.preventDefault();
+        handleNextHistory();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleAskQuestion, handleTriggerScreenshot, handleFocusChat, handleClearSession, handlePrevHistory, handleNextHistory]);
 
   const handleAskQuestionRef = useRef(handleAskQuestion);
   useEffect(() => {
@@ -149,7 +232,20 @@ export default function App() {
   }, [handleAskQuestion]);
 
   // Audio streamer hook for direct mic ASR connection
-  const { isStreaming, startStreaming, stopStreaming, liveTranscript, audioLevel, micError, activeSpeaker, switchSpeaker, resetAsrBuffer } = useAudioStreamer(
+  const {
+    isStreaming,
+    startStreaming,
+    stopStreaming,
+    isSystemAudioActive,
+    startSystemAudioShare,
+    stopSystemAudioShare,
+    liveTranscript,
+    audioLevel,
+    micError,
+    activeSpeaker,
+    switchSpeaker,
+    resetAsrBuffer
+  } = useAudioStreamer(
     'ws://localhost:8000/ws/transcribe',
     (detectedText, speaker) => {
       if (detectedText) {
@@ -182,6 +278,14 @@ export default function App() {
       stopStreaming();
     } else {
       startStreaming();
+    }
+  };
+
+  const handleToggleSystemAudio = () => {
+    if (isSystemAudioActive) {
+      stopSystemAudioShare();
+    } else {
+      startSystemAudioShare();
     }
   };
 
@@ -258,6 +362,20 @@ export default function App() {
     };
   }, []);
 
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  const handleToggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+      setIsFullscreen(true);
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+      setIsFullscreen(false);
+    }
+  };
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -278,94 +396,55 @@ export default function App() {
           stealthMode={stealthMode}
         />
       ) : (
-        /* Expanded View: Teleprompter Eye-Level Optimized Layout */
+        /* Expanded View: Target Screenshot Overlay Layout */
         <div style={{
-          maxWidth: stealthMode ? '680px' : '1000px',
+          maxWidth: '940px',
           width: '100%',
           margin: '0 auto',
-          padding: '10px 14px',
+          padding: '12px 14px',
           opacity: opacity,
-          transition: 'opacity 0.2s ease, max-width 0.3s ease'
+          transition: 'opacity 0.2s ease'
         }}>
-          {/* 1. FIRST SECTION: MAIN HEADER */}
+          {/* 1. Top Floating Pill Toolbar matching target screenshot */}
           <Header
-            isConnected={isConnected}
-            stealthMode={stealthMode}
-            setStealthMode={setStealthMode}
-            clickThrough={clickThrough}
-            setClickThrough={setClickThrough}
+            isStreaming={isStreaming}
+            onToggleMic={handleToggleMic}
+            audioLevel={audioLevel}
+            isSystemAudioActive={isSystemAudioActive}
+            onToggleSystemAudio={handleToggleSystemAudio}
+            onTriggerAnswer={() => handleAskQuestion()}
+            onTriggerScreenshot={handleTriggerScreenshot}
+            onToggleChat={handleFocusChat}
             onOpenSettings={() => setIsModalOpen(true)}
             onCollapse={() => handleToggleCollapse(true)}
-            onExitApp={handleExitApp}
+            isFullscreen={isFullscreen}
+            onToggleFullscreen={handleToggleFullscreen}
+            onClearSession={handleClearSession}
+            selectedModel={selectedModel}
+            setSelectedModel={setSelectedModel}
           />
 
-          {/* 2. SECOND SECTION: MIC & AI MODEL CONTROLS */}
-          <div style={{ marginBottom: '12px' }}>
-            <AudioVisualizer
-              isStreaming={isStreaming}
-              onToggleMic={handleToggleMic}
-              audioLevel={audioLevel}
-              liveTranscript={liveTranscript}
-              micError={micError}
-              selectedModel={selectedModel}
-              setSelectedModel={setSelectedModel}
-              opacity={opacity}
-              setOpacity={setOpacity}
-              bgMode={bgMode}
-              setBgMode={setBgMode}
-              activeSpeaker={activeSpeaker}
-              onSwitchSpeaker={switchSpeaker}
-            />
-          </div>
-
-          {/* 3. THIRD SECTION: MAIN EYE-LEVEL TELEPROMPTER ANSWER STAGE & SIMULATOR */}
-          <div className={`main-stage-grid ${stealthMode ? 'stealth' : ''}`}>
-            <CopilotAnswerCard
-              activeQuestion={activeQuestion}
-              responseText={responseText}
-              isGenerating={isGenerating}
-              latencyMs={latencyMs}
-            />
-
-            {!stealthMode && (
-              <div className="glass-panel" style={{ padding: '14px' }}>
-                <h3 style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <HelpCircle size={14} color="#10b981" /> Question Simulator
-                </h3>
-
-                <div style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
-                  <input
-                    type="text"
-                    className="glass-input"
-                    style={{ flex: 1, padding: '8px 10px', fontSize: '0.85rem' }}
-                    placeholder="Type custom question..."
-                    value={customQuestion}
-                    onChange={(e) => setCustomQuestion(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleAskQuestion()}
-                  />
-                  <button onClick={() => handleAskQuestion()} className="btn-primary" style={{ padding: '8px 12px' }}>
-                    <Send size={14} />
-                  </button>
-                </div>
-
-                {/* Preset Samples */}
-                <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
-                  {SAMPLE_QUESTIONS.map((q, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => handleAskQuestion(q)}
-                      className="btn-secondary"
-                      style={{ fontSize: '0.75rem', padding: '6px 10px', whiteSpace: 'nowrap', flexShrink: 0 }}
-                    >
-                      <Play size={11} color="#10b981" />
-                      <span>{q}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
+          {/* 2. Main Floating Glass Response Panel matching target screenshot */}
+          <CopilotAnswerCard
+            activeQuestion={activeQuestion}
+            responseText={responseText}
+            isGenerating={isGenerating}
+            onSendMessage={(msg) => handleAskQuestion(msg)}
+            onClearSession={handleClearSession}
+            onAddScreenshot={handleTriggerScreenshot}
+            onOpenSettings={() => setIsModalOpen(true)}
+            onClose={() => handleToggleCollapse(true)}
+            onPrevHistory={handlePrevHistory}
+            onNextHistory={handleNextHistory}
+            screenshotAttached={screenshotAttached}
+            inputRef={inputRef}
+            opacity={opacity}
+            setOpacity={setOpacity}
+            stealthMode={stealthMode}
+            setStealthMode={setStealthMode}
+            bgMode={bgMode}
+            setBgMode={setBgMode}
+          />
           <CandidateContextModal
             isOpen={isModalOpen}
             onClose={() => setIsModalOpen(false)}
