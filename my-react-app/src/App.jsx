@@ -17,7 +17,7 @@ const SAMPLE_QUESTIONS = [
 
 export default function App() {
   const [isConnected, setIsConnected] = useState(false);
-  const [stealthMode, setStealthMode] = useState(false);
+  const [stealthMode, setStealthMode] = useState(true);
   const [clickThrough, setClickThrough] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [opacity, setOpacity] = useState(0.85);
@@ -91,6 +91,7 @@ export default function App() {
   const [responseText, setResponseText] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [latencyMs, setLatencyMs] = useState(180);
+  const [conversationHistory, setConversationHistory] = useState([]);
 
   const socketRef = useRef(null);
 
@@ -122,10 +123,26 @@ export default function App() {
       handleToggleCollapse(false);
     }
 
+    const newItemId = Date.now();
+    const newLatency = Math.floor(Math.random() * 40) + 160;
+
     setActiveQuestion(query);
     setResponseText('');
     setIsGenerating(true);
-    setLatencyMs(Math.floor(Math.random() * 40) + 160);
+    setLatencyMs(newLatency);
+
+    setConversationHistory((prev) => [
+      ...prev,
+      {
+        id: newItemId,
+        question: query,
+        answer: '',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        isGenerating: true,
+        latencyMs: newLatency,
+        selectedModel: selectedModel || 'gemini-1.5-flash',
+      }
+    ]);
 
     const payload = JSON.stringify({
       type: 'transcript_question',
@@ -163,8 +180,35 @@ export default function App() {
             setResponseText('');
           } else if (data.type === 'token_delta') {
             setResponseText((prev) => prev + data.token);
+            setConversationHistory((prev) => {
+              if (prev.length === 0) return prev;
+              const updated = [...prev];
+              const lastIdx = updated.length - 1;
+              updated[lastIdx] = {
+                ...updated[lastIdx],
+                answer: updated[lastIdx].answer + data.token,
+                isGenerating: true
+              };
+              return updated;
+            });
           } else if (data.type === 'end_generating') {
             setIsGenerating(false);
+            setConversationHistory((prev) => {
+              if (prev.length === 0) return prev;
+              const updated = [...prev];
+              const lastIdx = updated.length - 1;
+              updated[lastIdx] = {
+                ...updated[lastIdx],
+                isGenerating: false
+              };
+              return updated;
+            });
+
+            // Automatically switch to Applicant Speech Mode so candidate can read/speak response to interviewer
+            if (switchSpeakerRef.current) {
+              console.log('[Turn Protocol] AI answer complete. Switching to Applicant Response Phase...');
+              switchSpeakerRef.current('applicant');
+            }
           }
         } catch (e) {}
       };
@@ -187,30 +231,82 @@ export default function App() {
     // 1. Only evaluate when speaker is interviewer/system (ignore applicant speech)
     if (speaker === 'applicant') return false;
 
-    // 2. Minimum length check (must be at least 12 chars and 3 words)
-    const words = lower.split(/\s+/);
-    if (cleanText.length < 12 || words.length < 3) return false;
+    // 2. Reject Whisper subtitle hallucinations & noise artifacts
+    const hallucinations = [
+      'sous-titrage', 'radio-canada', 'amara.org', 'subtitles by', 'thank you for watching',
+      'subscribe to', 'pog.org', 'pyscript', 'psyche', 'shizuk', 'particip'
+    ];
+    if (hallucinations.some(h => lower.includes(h))) return false;
 
-    // 3. Exclude casual filler phrases & pleasantries
+    // 3. Minimum length check (must be at least 14 chars and 3 words)
+    const words = lower.split(/\s+/).filter(Boolean);
+    if (cleanText.length < 14 || words.length < 3) return false;
+
+    // 4. Exclude casual filler phrases & pleasantries
     const fillerPhrases = [
       'thank you', 'thanks', 'can you hear me', 'am i audible', 'hello', 'hi there',
       'good morning', 'good afternoon', 'good evening', 'okay cool', 'sounds good',
-      'makes sense', 'see you', 'bye for now', 'yes i can', 'no problem', 'right right'
+      'makes sense', 'see you', 'bye for now', 'yes i can', 'no problem', 'right right',
+      'this is better', 'yeah this', 'let me show', 'as i can say'
     ];
     if (fillerPhrases.some(phrase => lower.includes(phrase))) return false;
 
-    // 4. Must contain a question mark OR an explicit technical/interview prompt trigger
-    const questionTriggers = [
+    // 5. Exclude explanatory statement prefixes (statements using "what/how/why" in prose)
+    const statementPrefixes = [
+      'so what we', 'this is how', 'that is why', 'here is what', 'what we are doing',
+      'i think that', 'we are going to', 'as you can see', 'let me explain', 'in this case',
+      'for example', 'first of all', 'remember we have'
+    ];
+    if (statementPrefixes.some(prefix => lower.startsWith(prefix))) return false;
+
+    // 6. Must have an explicit question mark OR a question-starter phrase in the first 3 words
+    const hasQuestionMark = cleanText.includes('?');
+
+    const questionStarters = [
       'what', 'how', 'why', 'where', 'when', 'which', 'who', 'whose', 'whom',
       'can you', 'could you', 'would you', 'explain', 'tell me', 'describe',
       'difference', 'compare', 'walk me through', 'design', 'implement',
-      'optimize', 'architecture', 'in your experience', 'have you worked'
+      'optimize', 'architecture', 'have you', 'in your opinion'
     ];
 
-    const hasQuestionMark = cleanText.includes('?');
-    const hasTriggerKeyword = questionTriggers.some(trigger => lower.includes(trigger));
+    const firstThreeWords = words.slice(0, 3).join(' ');
+    const startsWithQuestionTrigger = questionStarters.some(trigger =>
+      firstThreeWords.includes(trigger) || lower.startsWith(trigger)
+    );
 
-    return hasQuestionMark || hasTriggerKeyword;
+    // Reject dangling/incomplete trailing prepositions ("Can you explain about", "How do you handle in")
+    const trailingConnectors = [
+      'about', 'with', 'in', 'of', 'for', 'and', 'or', 'the', 'a', 'an', 'to', 'is', 'are',
+      'by', 'on', 'what', 'how', 'why', 'where', 'when', 'can you', 'could you', 'would you',
+      'like', 'such as', 'that', 'this', 'if', 'when', 'which', 'who'
+    ];
+    const lastWord = words[words.length - 1];
+    const isDanglingIncomplete = trailingConnectors.includes(lastWord) && !hasQuestionMark;
+
+    if (isDanglingIncomplete) return false;
+
+    return hasQuestionMark || startsWithQuestionTrigger;
+  };
+
+  // Smart Speech Accumulator for ASR chunks
+  const pendingQuestionRef = useRef('');
+  const accumulationTimerRef = useRef(null);
+
+  const dispatchAccumulatedQuestion = (text) => {
+    if (!text || !text.trim()) return;
+    const finalQ = text.trim();
+
+    // Final structural validation before sending complete question to LLM
+    if (!isInterviewQuestion(finalQ, 'interviewer')) {
+      console.log(`[ASR Accumulator] Incomplete question speech dropped: "${finalQ}"`);
+      return;
+    }
+
+    console.log(`[Copilot AI Dispatching 100% Complete Question]: "${finalQ}"`);
+    if (handleAskQuestionRef.current) {
+      handleAskQuestionRef.current(finalQ);
+    }
+    pendingQuestionRef.current = '';
   };
 
   // Audio streamer hook for direct mic ASR connection
@@ -231,14 +327,29 @@ export default function App() {
     'ws://localhost:8000/ws/transcribe',
     (detectedText, speaker) => {
       if (detectedText) {
-        if (isInterviewQuestion(detectedText, speaker)) {
-          console.log(`[Interviewer Question Triggered AI Search]: "${detectedText}"`);
-          if (handleAskQuestionRef.current) {
-            handleAskQuestionRef.current(detectedText);
-          }
-        } else {
-          console.log(`[Conversational Speech Filtered Out]: "${detectedText}"`);
+        if (speaker === 'applicant') {
+          console.log(`[Applicant Speech Output]: "${detectedText}"`);
+          // Automatically reset to Interviewer Listening Mode 2s after candidate finishes speaking response
+          if (accumulationTimerRef.current) clearTimeout(accumulationTimerRef.current);
+          accumulationTimerRef.current = setTimeout(() => {
+            if (switchSpeakerRef.current) {
+              console.log('[Turn Protocol] Candidate response finished. Resetting to Interviewer Listening Mode...');
+              switchSpeakerRef.current('interviewer');
+            }
+          }, 2000);
+          return;
         }
+
+        // Accumulate incoming text chunks continuously while interviewer speaks
+        const combined = (pendingQuestionRef.current + ' ' + detectedText).trim();
+        pendingQuestionRef.current = combined;
+
+        if (accumulationTimerRef.current) clearTimeout(accumulationTimerRef.current);
+
+        // Require a 1400ms (1.4s) natural silence pause after speech before dispatching to LLM
+        accumulationTimerRef.current = setTimeout(() => {
+          dispatchAccumulatedQuestion(pendingQuestionRef.current);
+        }, 1400);
       }
     }
   );
@@ -251,6 +362,16 @@ export default function App() {
   useEffect(() => {
     resetAsrBufferRef.current = resetAsrBuffer;
   }, [resetAsrBuffer]);
+
+  // Auto-start microphone streaming on application load
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!isStreaming) {
+        startStreaming();
+      }
+    }, 600);
+    return () => clearTimeout(timer);
+  }, []);
 
   const handleToggleMic = () => {
     if (isStreaming) {
@@ -307,8 +428,29 @@ export default function App() {
               setResponseText('');
             } else if (data.type === 'token_delta') {
               setResponseText((prev) => prev + data.token);
+              setConversationHistory((prev) => {
+                if (prev.length === 0) return prev;
+                const updated = [...prev];
+                const lastIdx = updated.length - 1;
+                updated[lastIdx] = {
+                  ...updated[lastIdx],
+                  answer: updated[lastIdx].answer + data.token,
+                  isGenerating: true
+                };
+                return updated;
+              });
             } else if (data.type === 'end_generating') {
               setIsGenerating(false);
+              setConversationHistory((prev) => {
+                if (prev.length === 0) return prev;
+                const updated = [...prev];
+                const lastIdx = updated.length - 1;
+                updated[lastIdx] = {
+                  ...updated[lastIdx],
+                  isGenerating: false
+                };
+                return updated;
+              });
               if (resetAsrBufferRef.current) resetAsrBufferRef.current();
             }
           } catch (err) {
@@ -341,10 +483,22 @@ export default function App() {
     };
   }, []);
 
+  const handleMouseEnterInteractive = () => {
+    if (clickThrough && window.electronAPI && window.electronAPI.setIgnoreMouseEvents) {
+      window.electronAPI.setIgnoreMouseEvents(false);
+    }
+  };
+
+  const handleMouseLeaveInteractive = () => {
+    if (clickThrough && window.electronAPI && window.electronAPI.setIgnoreMouseEvents) {
+      window.electronAPI.setIgnoreMouseEvents(true, { forward: true });
+    }
+  };
+
   return (
     <div style={{
       minHeight: '100vh',
-      background: bgMode === 'transparent' ? 'transparent' : 'radial-gradient(ellipse at top, #111827 0%, #030712 100%)',
+      background: 'transparent',
       transition: 'background 0.3s ease',
       display: 'flex',
       alignItems: isCollapsed ? 'flex-start' : 'stretch',
@@ -362,14 +516,18 @@ export default function App() {
         />
       ) : (
         /* Expanded View: Teleprompter Eye-Level Optimized Layout */
-        <div style={{
-          maxWidth: stealthMode ? '680px' : '1000px',
-          width: '100%',
-          margin: '0 auto',
-          padding: '10px 14px',
-          opacity: opacity,
-          transition: 'opacity 0.2s ease, max-width 0.3s ease'
-        }}>
+        <div
+          onMouseEnter={handleMouseEnterInteractive}
+          onMouseLeave={handleMouseLeaveInteractive}
+          style={{
+            maxWidth: stealthMode ? '680px' : '1000px',
+            width: '100%',
+            margin: '0 auto',
+            padding: '10px 14px',
+            opacity: opacity,
+            transition: 'opacity 0.2s ease, max-width 0.3s ease'
+          }}
+        >
           {/* 1. FIRST SECTION: MAIN HEADER */}
           <Header
             isConnected={isConnected}
@@ -417,16 +575,19 @@ export default function App() {
           {/* 3. THIRD SECTION: MAIN EYE-LEVEL TELEPROMPTER ANSWER STAGE & SIMULATOR */}
           <div className={`main-stage-grid ${stealthMode ? 'stealth' : ''}`}>
             <CopilotAnswerCard
+              conversationHistory={conversationHistory}
               activeQuestion={activeQuestion}
               responseText={responseText}
               isGenerating={isGenerating}
               latencyMs={latencyMs}
+              selectedModel={selectedModel}
+              onClearHistory={() => setConversationHistory([])}
             />
 
             {!stealthMode && (
               <div className="glass-panel" style={{ padding: '14px' }}>
                 <h3 style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <HelpCircle size={14} color="#10b981" /> Question Simulator
+                  <HelpCircle size={14} color="#ffffff" /> Question Simulator
                 </h3>
 
                 <form onSubmit={(e) => { e.preventDefault(); handleAskQuestion(); }} style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
@@ -454,7 +615,7 @@ export default function App() {
                       className="btn-secondary"
                       style={{ fontSize: '0.75rem', padding: '6px 10px', whiteSpace: 'nowrap', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '4px' }}
                     >
-                      <Play size={11} color="#10b981" />
+                      <Play size={11} color="#ffffff" />
                       <span>{q}</span>
                     </button>
                   ))}

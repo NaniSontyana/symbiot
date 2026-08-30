@@ -52,7 +52,7 @@ export default function DesktopScreenModal({
         left: 0,
         right: 0,
         bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.75)',
+        backgroundColor: 'rgba(0, 0, 0, 0.85)',
         backdropFilter: 'blur(8px)',
         display: 'flex',
         alignItems: 'center',
@@ -71,27 +71,27 @@ export default function DesktopScreenModal({
           overflowY: 'auto',
           padding: '24px',
           borderRadius: '16px',
-          background: 'rgba(15, 23, 42, 0.95)',
-          border: '1px solid rgba(167, 139, 250, 0.35)',
-          boxShadow: '0 20px 50px rgba(0, 0, 0, 0.9)',
+          background: '#000000',
+          border: '1px solid #333333',
+          boxShadow: '0 20px 50px rgba(0, 0, 0, 0.95)',
           position: 'relative'
         }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px', paddingBottom: '12px', borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px', paddingBottom: '12px', borderBottom: '1px solid #262626' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{ padding: '8px', borderRadius: '10px', background: 'rgba(167, 139, 250, 0.15)', border: '1px solid rgba(167, 139, 250, 0.3)' }}>
-              <Monitor size={22} color="#c084fc" />
+            <div style={{ padding: '8px', borderRadius: '10px', background: '#171717', border: '1px solid #333333' }}>
+              <Monitor size={22} color="#ffffff" />
             </div>
             <div>
               <h2 style={{ fontSize: '1.15rem', fontWeight: 800, margin: 0, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 Desktop Screen & Monitor Selector
-                <span style={{ fontSize: '0.66rem', padding: '2px 6px', borderRadius: '6px', background: 'rgba(167, 139, 250, 0.2)', color: '#c084fc', border: '1px solid rgba(167, 139, 250, 0.4)' }}>
+                <span style={{ fontSize: '0.66rem', padding: '2px 6px', borderRadius: '6px', background: '#171717', color: '#ffffff', border: '1px solid #333333' }}>
                   Parakeet AI Mode
                 </span>
               </h2>
-              <p style={{ fontSize: '0.78rem', color: '#9ca3af', margin: '2px 0 0 0' }}>
+              <p style={{ fontSize: '0.78rem', color: '#a3a3a3', margin: '2px 0 0 0' }}>
                 Select target screen to position teleprompter overlay & stream interviewer system audio
               </p>
             </div>
@@ -99,15 +99,15 @@ export default function DesktopScreenModal({
 
           <button
             onClick={onClose}
-            style={{ background: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer', padding: '4px' }}
+            style={{ background: 'transparent', border: 'none', color: '#a3a3a3', cursor: 'pointer', padding: '4px' }}
           >
-            <X size={20} />
+            <X size={20} color="#ffffff" />
           </button>
         </div>
 
         {/* Action Controls Top Bar */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#e2e8f0', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+          <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#ffffff', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
             Available Displays & Windows ({sources.length || displaysList.length})
           </span>
 
@@ -117,7 +117,7 @@ export default function DesktopScreenModal({
               className="btn-secondary"
               style={{ padding: '4px 10px', fontSize: '0.74rem', display: 'flex', alignItems: 'center', gap: '4px' }}
             >
-              <RefreshCw size={12} className={loading ? 'spin' : ''} />
+              <RefreshCw size={12} className={loading ? 'spin' : ''} color="#ffffff" />
               <span>Refresh Previews</span>
             </button>
           </div>
@@ -137,8 +137,8 @@ export default function DesktopScreenModal({
                   if (onSelectDisplay) onSelectDisplay(index, source);
                 }}
                 style={{
-                  background: isSelected ? 'rgba(167, 139, 250, 0.12)' : 'rgba(255, 255, 255, 0.03)',
-                  border: isSelected ? '2px solid #c084fc' : '1px solid rgba(255, 255, 255, 0.08)',
+                  background: isSelected ? '#171717' : '#0a0a0a',
+                  border: isSelected ? '2px solid #ffffff' : '1px solid #262626',
                   borderRadius: '12px',
                   padding: '12px',
                   cursor: 'pointer',
@@ -150,20 +150,20 @@ export default function DesktopScreenModal({
                 <div style={{
                   height: '130px',
                   borderRadius: '8px',
-                  background: '#090d16',
+                  background: '#000000',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   overflow: 'hidden',
                   marginBottom: '10px',
-                  border: '1px solid rgba(255, 255, 255, 0.05)',
+                  border: '1px solid #262626',
                   position: 'relative'
                 }}>
                   {source.thumbnail ? (
                     <img src={source.thumbnail} alt={source.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   ) : (
-                    <div style={{ textAlign: 'center', color: '#64748b' }}>
-                      <Monitor size={42} color={isSelected ? '#c084fc' : '#475569'} />
+                    <div style={{ textAlign: 'center', color: '#a3a3a3' }}>
+                      <Monitor size={42} color={isSelected ? '#ffffff' : '#525252'} />
                       <div style={{ fontSize: '0.72rem', marginTop: '6px', fontWeight: 600 }}>
                         {source.label || `Display ${index + 1}`}
                       </div>
@@ -175,7 +175,7 @@ export default function DesktopScreenModal({
                       position: 'absolute',
                       top: '6px',
                       right: '6px',
-                      background: '#c084fc',
+                      background: '#ffffff',
                       color: '#000',
                       borderRadius: '50%',
                       width: '22px',
@@ -184,7 +184,7 @@ export default function DesktopScreenModal({
                       alignItems: 'center',
                       justifyContent: 'center'
                     }}>
-                      <Check size={14} strokeWidth={3} />
+                      <Check size={14} strokeWidth={3} color="#000000" />
                     </div>
                   )}
                 </div>
@@ -192,10 +192,10 @@ export default function DesktopScreenModal({
                 {/* Display Label */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div>
-                    <h4 style={{ fontSize: '0.85rem', fontWeight: 700, margin: 0, color: isSelected ? '#c084fc' : '#f1f5f9', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '180px' }}>
+                    <h4 style={{ fontSize: '0.85rem', fontWeight: 700, margin: 0, color: '#ffffff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '180px' }}>
                       {source.name || source.label || `Screen ${index + 1}`}
                     </h4>
-                    <span style={{ fontSize: '0.68rem', color: '#9ca3af' }}>
+                    <span style={{ fontSize: '0.68rem', color: '#a3a3a3' }}>
                       {source.bounds ? `${source.bounds.width} x ${source.bounds.height}` : 'Active Desktop Screen'}
                     </span>
                   </div>
@@ -206,9 +206,9 @@ export default function DesktopScreenModal({
                       padding: '4px 8px',
                       fontSize: '0.7rem',
                       borderRadius: '6px',
-                      background: isSelected ? '#c084fc' : 'rgba(255,255,255,0.1)',
-                      color: isSelected ? '#000' : '#fff',
-                      border: 'none',
+                      background: isSelected ? '#ffffff' : '#171717',
+                      color: isSelected ? '#000000' : '#ffffff',
+                      border: isSelected ? 'none' : '1px solid #333333',
                       fontWeight: 700
                     }}
                   >
@@ -221,7 +221,7 @@ export default function DesktopScreenModal({
         </div>
 
         {/* Footer Info & System Audio Toggle */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '12px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '12px', borderTop: '1px solid #262626' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <button
               onClick={() => onToggleSystemAudio && onToggleSystemAudio(selectedSourceId)}
@@ -229,9 +229,9 @@ export default function DesktopScreenModal({
                 padding: '6px 12px',
                 fontSize: '0.78rem',
                 borderRadius: '8px',
-                border: isSystemAudioActive ? '1px solid #10b981' : '1px solid rgba(255,255,255,0.15)',
-                background: isSystemAudioActive ? 'rgba(16, 185, 129, 0.2)' : 'transparent',
-                color: isSystemAudioActive ? '#34d399' : '#e2e8f0',
+                border: isSystemAudioActive ? '1px solid #ffffff' : '1px solid #333333',
+                background: isSystemAudioActive ? '#ffffff' : '#0a0a0a',
+                color: isSystemAudioActive ? '#000000' : '#ffffff',
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
@@ -239,13 +239,13 @@ export default function DesktopScreenModal({
                 fontWeight: 600
               }}
             >
-              <Volume2 size={14} color={isSystemAudioActive ? "#34d399" : "#fff"} />
+              <Volume2 size={14} color={isSystemAudioActive ? "#000000" : "#ffffff"} />
               <span>{isSystemAudioActive ? 'System Audio Stream ON' : 'Share Screen Audio (Interviewer)'}</span>
             </button>
           </div>
 
-          <div style={{ fontSize: '0.72rem', color: '#9ca3af', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ background: 'rgba(255,255,255,0.06)', padding: '2px 6px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.1)', color: '#c084fc', fontWeight: 700 }}>
+          <div style={{ fontSize: '0.72rem', color: '#a3a3a3', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ background: '#171717', padding: '2px 6px', borderRadius: '4px', border: '1px solid #333333', color: '#ffffff', fontWeight: 700 }}>
               Alt + D
             </span>
             <span>Quick Cycle Shortcut</span>

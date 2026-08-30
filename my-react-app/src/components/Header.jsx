@@ -43,7 +43,9 @@ export default function Header({
         WebkitAppRegion: 'drag',
         cursor: 'grab',
         height: '42px',
-        boxSizing: 'border-box'
+        boxSizing: 'border-box',
+        background: '#000000',
+        border: '1px solid #262626'
       }}
     >
       {/* 1. Left Branding */}
@@ -51,7 +53,7 @@ export default function Header({
         <SymbiotLogo size={24} />
         <h1 style={{ fontSize: '1.02rem', fontWeight: 800, letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '6px', margin: 0, color: '#ffffff' }}>
           Symbiot
-          <span style={{ fontSize: '0.62rem', fontWeight: 600, padding: '1px 5px', borderRadius: '6px', background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
+          <span style={{ fontSize: '0.62rem', fontWeight: 600, padding: '1px 5px', borderRadius: '6px', background: '#171717', color: '#ffffff', border: '1px solid #333333' }}>
             v2.0
           </span>
         </h1>
@@ -69,14 +71,14 @@ export default function Header({
             gap: '5px',
             padding: '0 8px',
             borderRadius: '6px',
-            background: isConnected ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-            border: isConnected ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
-            color: isConnected ? '#10b981' : '#ef4444',
+            background: isConnected ? '#171717' : '#0a0a0a',
+            border: isConnected ? '1px solid #525252' : '1px solid #262626',
+            color: isConnected ? '#ffffff' : '#a3a3a3',
             fontSize: '0.72rem',
             fontWeight: 600
           }}
         >
-          {isConnected ? <Wifi size={12} /> : <WifiOff size={12} />}
+          {isConnected ? <Wifi size={12} color="#ffffff" /> : <WifiOff size={12} color="#a3a3a3" />}
           <span>{isConnected ? 'Online' : 'Offline'}</span>
         </div>
 
@@ -90,15 +92,15 @@ export default function Header({
             width: '28px',
             padding: 0,
             borderRadius: '6px',
-            borderColor: 'rgba(167, 139, 250, 0.4)',
-            color: '#c084fc',
-            background: 'rgba(167, 139, 250, 0.12)',
+            borderColor: '#333333',
+            color: '#ffffff',
+            background: '#0a0a0a',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center'
           }}
         >
-          <Monitor size={13} />
+          <Monitor size={13} color="#ffffff" />
         </button>
 
         {/* Click-Through Pass-Through Toggle */}
@@ -117,15 +119,15 @@ export default function Header({
             width: '28px',
             padding: 0,
             borderRadius: '6px',
-            borderColor: clickThrough ? '#60a5fa' : 'var(--panel-border)',
-            color: clickThrough ? '#60a5fa' : 'var(--text-muted)',
-            background: clickThrough ? 'rgba(96, 165, 250, 0.15)' : 'transparent',
+            borderColor: clickThrough ? '#ffffff' : '#333333',
+            color: clickThrough ? '#ffffff' : '#a3a3a3',
+            background: clickThrough ? '#262626' : '#0a0a0a',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center'
           }}
         >
-          <MousePointerClick size={13} />
+          <MousePointerClick size={13} color={clickThrough ? '#ffffff' : '#a3a3a3'} />
         </button>
 
         {/* Stealth Mode Toggle */}
@@ -138,15 +140,15 @@ export default function Header({
             width: '28px',
             padding: 0,
             borderRadius: '6px',
-            borderColor: stealthMode ? 'var(--primary-accent)' : 'var(--panel-border)',
-            color: stealthMode ? 'var(--primary-accent)' : 'var(--text-muted)',
-            background: stealthMode ? 'rgba(16, 185, 129, 0.15)' : 'transparent',
+            borderColor: stealthMode ? '#ffffff' : '#333333',
+            color: stealthMode ? '#ffffff' : '#a3a3a3',
+            background: stealthMode ? '#262626' : '#0a0a0a',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center'
           }}
         >
-          <Shield size={13} />
+          <Shield size={13} color={stealthMode ? '#ffffff' : '#a3a3a3'} />
         </button>
 
         {/* Candidate Resume & Settings Modal Button */}
@@ -161,10 +163,13 @@ export default function Header({
             borderRadius: '6px',
             display: 'flex',
             alignItems: 'center',
-            gap: '4px'
+            gap: '4px',
+            color: '#ffffff',
+            borderColor: '#333333',
+            background: '#0a0a0a'
           }}
         >
-          <Settings size={12} />
+          <Settings size={12} color="#ffffff" />
           <span>Resume</span>
         </button>
 
@@ -178,15 +183,15 @@ export default function Header({
             width: '26px',
             padding: 0,
             borderRadius: '6px',
-            background: 'rgba(16, 185, 129, 0.12)',
-            borderColor: 'rgba(16, 185, 129, 0.3)',
-            color: '#10b981',
+            background: '#0a0a0a',
+            borderColor: '#333333',
+            color: '#ffffff',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center'
           }}
         >
-          <Minimize2 size={12} />
+          <Minimize2 size={12} color="#ffffff" />
         </button>
 
         {/* Exit Application Button */}
@@ -199,15 +204,15 @@ export default function Header({
             width: '26px',
             padding: 0,
             borderRadius: '6px',
-            background: 'rgba(239, 68, 68, 0.12)',
-            borderColor: 'rgba(239, 68, 68, 0.3)',
-            color: '#ef4444',
+            background: '#0a0a0a',
+            borderColor: '#404040',
+            color: '#ffffff',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center'
           }}
         >
-          <X size={12} />
+          <X size={12} color="#ffffff" />
         </button>
       </div>
     </header>

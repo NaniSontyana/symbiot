@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Sparkles, ChevronDown, X } from 'lucide-react';
+import { Maximize2, X } from 'lucide-react';
 import SymbiotLogo from './SymbiotLogo';
 
 export default function FloatingPoint({ onExpand, onExitApp, isGenerating, isStreaming, stealthMode }) {
@@ -10,7 +10,6 @@ export default function FloatingPoint({ onExpand, onExitApp, isGenerating, isStr
 
   // Handle Dragging in Browser Mode
   const handleDragStart = (e) => {
-    // Left click only
     if (e.button !== 0) return;
 
     isMovedRef.current = false;
@@ -47,26 +46,16 @@ export default function FloatingPoint({ onExpand, onExitApp, isGenerating, isStr
     window.addEventListener('mouseup', onMouseUp);
   };
 
-  const handleClick = (e) => {
-    e.stopPropagation();
-    if (!isMovedRef.current) {
+  const handleExpandClick = (e) => {
+    if (e) e.stopPropagation();
+    if (onExpand) {
       onExpand();
-    }
-    isMovedRef.current = false;
-  };
-
-  const handleDoubleClick = (e) => {
-    e.stopPropagation();
-    if (onExitApp) {
-      onExitApp();
     }
   };
 
   return (
     <div
       onMouseDown={handleDragStart}
-      onClick={handleClick}
-      onDoubleClick={handleDoubleClick}
       className="glass-panel"
       style={{
         position: window.electronAPI ? 'relative' : 'fixed',
@@ -78,70 +67,102 @@ export default function FloatingPoint({ onExpand, onExitApp, isGenerating, isStr
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: '8px',
-        padding: '8px 12px',
-        borderRadius: window.electronAPI ? '12px' : '30px',
-        cursor: isDragging ? 'grabbing' : 'pointer',
-        border: '1px solid rgba(16, 185, 129, 0.45)',
-        background: 'rgba(15, 23, 42, 0.92)',
-        boxShadow: isGenerating ? '0 0 25px rgba(16, 185, 129, 0.6)' : '0 10px 30px rgba(0, 0, 0, 0.5)',
+        padding: '6px 10px',
+        borderRadius: window.electronAPI ? '10px' : '26px',
+        border: '1px solid #333333',
+        background: '#000000',
+        boxShadow: '0 10px 30px rgba(0, 0, 0, 0.9)',
         backdropFilter: 'blur(16px)',
         WebkitAppRegion: 'drag',
         zIndex: 9999,
         userSelect: 'none',
-        boxSizing: 'border-box',
-        transition: isDragging ? 'none' : 'box-shadow 0.2s ease, transform 0.15s ease'
+        boxSizing: 'border-box'
       }}
-      title="Single Click to open, Double Click to Exit/Close application, Drag to move"
     >
-      {/* Glowing Symbiot Logo Emblem */}
-      {!stealthMode && (
-        <SymbiotLogo size={28} />
-      )}
-
-      <div style={{ pointerEvents: 'none' }}>
-        <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '6px' }}>
-          Symbiot
-          {isStreaming && (
-            <span style={{
-              width: '8px',
-              height: '8px',
-              borderRadius: '50%',
-              background: '#ef4444',
-              display: 'inline-block',
-              boxShadow: '0 0 8px #ef4444'
-            }} />
-          )}
-        </div>
-        <span style={{ fontSize: '0.7rem', color: isGenerating ? '#10b981' : 'var(--text-muted)' }}>
-          {isGenerating ? 'Generating Answer...' : 'Click Open • 2xClick Exit'}
-        </span>
-      </div>
-
-      {/* Quick Close Button */}
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          if (onExitApp) onExitApp();
-        }}
+      {/* Clickable Main Content Region (No-Drag for instant response) */}
+      <div
+        onClick={handleExpandClick}
         style={{
-          border: 'none',
-          background: 'rgba(239, 68, 68, 0.2)',
-          color: '#ef4444',
-          borderRadius: '50%',
-          width: '24px',
-          height: '24px',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center',
+          gap: '8px',
           cursor: 'pointer',
-          WebkitAppRegion: 'no-drag'
+          WebkitAppRegion: 'no-drag',
+          flex: 1
         }}
-        title="Close Application"
+        title="Click to expand/open window"
       >
-        <X size={14} />
-      </button>
+        {!stealthMode && (
+          <SymbiotLogo size={24} />
+        )}
 
-      <ChevronDown size={16} color="var(--text-muted)" style={{ transform: 'rotate(-90deg)', pointerEvents: 'none' }} />
+        <div>
+          <div style={{ fontSize: '0.82rem', fontWeight: 800, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '6px', margin: 0 }}>
+            Symbiot
+            {isStreaming && (
+              <span style={{
+                width: '7px',
+                height: '7px',
+                borderRadius: '50%',
+                background: '#ffffff',
+                display: 'inline-block',
+                boxShadow: '0 0 6px #ffffff'
+              }} />
+            )}
+          </div>
+          <span style={{ fontSize: '0.66rem', color: '#a3a3a3' }}>
+            {isGenerating ? 'Generating Answer...' : 'Click to Open Teleprompter'}
+          </span>
+        </div>
+      </div>
+
+      {/* Action Buttons (No-Drag) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', WebkitAppRegion: 'no-drag' }}>
+        {/* Explicit Expand / Open Button */}
+        <button
+          onClick={handleExpandClick}
+          style={{
+            border: '1px solid #333333',
+            background: '#0a0a0a',
+            color: '#ffffff',
+            borderRadius: '6px',
+            padding: '4px 8px',
+            fontSize: '0.7rem',
+            fontWeight: 700,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            cursor: 'pointer'
+          }}
+          title="Open Full Window"
+        >
+          <Maximize2 size={12} color="#ffffff" />
+          <span>Open</span>
+        </button>
+
+        {/* Exit Application Button */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            if (onExitApp) onExitApp();
+          }}
+          style={{
+            border: '1px solid #404040',
+            background: '#0a0a0a',
+            color: '#ffffff',
+            borderRadius: '6px',
+            width: '24px',
+            height: '24px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer'
+          }}
+          title="Close Application"
+        >
+          <X size={13} color="#ffffff" />
+        </button>
+      </div>
     </div>
   );
 }

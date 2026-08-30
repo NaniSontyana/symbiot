@@ -83,21 +83,24 @@ async def websocket_transcribe(websocket: WebSocket):
                 # Evaluate Voice Activity Detection (VAD) independently per channel
                 has_speech = target_vad.is_speech(chunk_bytes)
                 
-                # Transcribe upon utterance pause (silence detected) or when audio buffer reaches ~1.5 seconds (48,000 bytes)
-                should_transcribe = (target_vad.is_utterance_complete() and len(target_buffer) >= 6400) or (len(target_buffer) >= 48000)
+                # Transcribe upon utterance pause (silence detected >= 0.5s buffer) or max buffer ~5.0 seconds (160,000 bytes)
+                should_transcribe = (target_vad.is_utterance_complete() and len(target_buffer) >= 16000) or (len(target_buffer) >= 160000)
                 
                 if should_transcribe:
                     res = transcriber.process_audio_buffer(bytes(target_buffer))
                     transcript_text, engine_used = res if isinstance(res, tuple) else (res, "whisper")
                     if transcript_text:
                         logger.info(f"[ASR WS] Transcribed [{channel}] [{engine_used}]: '{transcript_text}'")
-                        await websocket.send_json({
-                            "type": "transcript_chunk",
-                            "text": transcript_text,
-                            "speaker": channel,
-                            "engine": engine_used,
-                            "is_final": True
-                        })
+                        try:
+                            await websocket.send_json({
+                                "type": "transcript_chunk",
+                                "text": transcript_text,
+                                "speaker": channel,
+                                "engine": engine_used,
+                                "is_final": True
+                            })
+                        except Exception as send_err:
+                            logger.info(f"[ASR WS] Client disconnected before transcript send: {send_err}")
                         target_buffer.clear()
                         target_vad.reset()
                     elif len(target_buffer) >= 160000: # ~5 seconds max buffer safety

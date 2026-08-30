@@ -21,8 +21,11 @@ function createWindow() {
   // Enable Screen-Share Protection (Undetectable on Zoom, Teams, Meet)
   mainWindow.setContentProtection(true);
 
-  // Keep on top of all windows
-  mainWindow.setAlwaysOnTop(true, 'screen-saver');
+  // Keep pinned on top of all websites, web pages, full-screen browsers, and desktop apps
+  mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
+  if (mainWindow.setVisibleOnAllWorkspaces) {
+    mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  }
 
   const devServerUrl = 'http://localhost:5174';
   mainWindow.loadURL(devServerUrl).catch(() => {
@@ -71,7 +74,7 @@ app.whenReady().then(() => {
   globalShortcut.register('CommandOrControl+Alt+C', () => {
     if (mainWindow) {
       isClickThrough = !isClickThrough;
-      mainWindow.setIgnoreMouseEvents(isClickThrough, { forward: true });
+      mainWindow.setIgnoreMouseEvents(isClickThrough);
       mainWindow.webContents.send('hotkey-toggle-clickthrough', isClickThrough);
     }
   });
@@ -173,7 +176,18 @@ ipcMain.on('resize-window', (event, { isCollapsed, stealthMode }) => {
 
 ipcMain.on('toggle-click-through', (event, ignore) => {
   if (mainWindow) {
-    mainWindow.setIgnoreMouseEvents(ignore, { forward: true });
+    isClickThrough = ignore;
+    if (ignore) {
+      mainWindow.setIgnoreMouseEvents(true, { forward: true });
+    } else {
+      mainWindow.setIgnoreMouseEvents(false);
+    }
+  }
+});
+
+ipcMain.on('set-ignore-mouse-events', (event, ignore, options) => {
+  if (mainWindow) {
+    mainWindow.setIgnoreMouseEvents(ignore, options || { forward: true });
   }
 });
 

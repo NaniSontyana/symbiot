@@ -9,6 +9,30 @@ import json
 
 logger = logging.getLogger("asr_transcriber")
 
+def normalize_audio(pcm_data: bytes, target_peak: float = 0.85) -> bytes:
+    """
+    Normalizes Int16 PCM audio peak volume to ~85% of full scale to boost low/soft microphone inputs.
+    """
+    if not pcm_data or len(pcm_data) < 4:
+        return pcm_data
+
+    aligned_len = len(pcm_data) - (len(pcm_data) % 2)
+    samples = np.frombuffer(pcm_data[:aligned_len], dtype=np.int16).astype(np.float32)
+    if len(samples) == 0:
+        return pcm_data
+
+    max_val = np.max(np.abs(samples))
+    if max_val <= 0:
+        return pcm_data
+
+    scale = (32767.0 * target_peak) / max_val
+    scale = min(scale, 4.0)  # Max gain cap of 4x (12dB) to prevent boosting silent noise floors
+
+    if scale > 1.05:
+        normalized_samples = np.clip(samples * scale, -32768, 32767).astype(np.int16)
+        return normalized_samples.tobytes()
+    return pcm_data
+
 def pcm_to_wav(pcm_data: bytes, sample_rate: int = 16000, num_channels: int = 1, bits_per_sample: int = 16) -> bytes:
     """
     Constructs an in-memory WAV file from raw Int16 PCM binary audio data
@@ -37,6 +61,7 @@ class ParakeetTranscriber:
         self.model = None
         self.use_faster_whisper = False
         self.groq_api_key = groq_api_key or os.getenv("GROQ_API_KEY")
+        self.groq_cooldown_until = 0.0
 
         try:
             from faster_whisper import WhisperModel
@@ -54,8 +79,13 @@ class ParakeetTranscriber:
         if not self.groq_api_key or not self.groq_api_key.startswith("gsk_"):
             return ""
 
+        # Check if rate-limited (HTTP 429 cooldown)
+        if time.time() < self.groq_cooldown_until:
+            return ""
+
         try:
-            wav_bytes = pcm_to_wav(audio_bytes)
+            norm_audio = normalize_audio(audio_bytes)
+            wav_bytes = pcm_to_wav(norm_audio)
             boundary = '----WebKitFormBoundary7MA4YWxkTrZu0gW'
             
             body = bytearray()
@@ -69,14 +99,24 @@ class ParakeetTranscriber:
             body.extend(b'Content-Disposition: form-data; name="language"\r\n\r\n')
             body.extend(b'en\r\n')
 
-            # 3. Add prompt parameter for 100% technical dictionary accuracy
-            tech_prompt = "PostgreSQL, pgvector, WebSockets, React, Next.js, Node.js, Microservices, Python, FastAPI, Docker, Kubernetes, HNSW, Redis, REST API, GraphQL, SQL, NoSQL, TypeScript, JavaScript"
+            # 3. Add temperature=0.0 parameter for deterministic accuracy
+            body.extend(f'--{boundary}\r\n'.encode('utf-8'))
+            body.extend(b'Content-Disposition: form-data; name="temperature"\r\n\r\n')
+            body.extend(b'0.0\r\n')
+
+            # 4. Add response_format=json parameter
+            body.extend(f'--{boundary}\r\n'.encode('utf-8'))
+            body.extend(b'Content-Disposition: form-data; name="response_format"\r\n\r\n')
+            body.extend(b'json\r\n')
+
+            # 5. Natural clean prompt context without meta labels
+            clean_prompt = "The candidate and interviewer are discussing software development, database design, vector indexing, system architecture, microservices, PostgreSQL, WebSockets, Python, React, and Node.js."
             body.extend(f'--{boundary}\r\n'.encode('utf-8'))
             body.extend(b'Content-Disposition: form-data; name="prompt"\r\n\r\n')
-            body.extend(tech_prompt.encode('utf-8'))
+            body.extend(clean_prompt.encode('utf-8'))
             body.extend(b'\r\n')
 
-            # 4. Add audio file payload
+            # 6. Add audio file payload
             body.extend(f'--{boundary}\r\n'.encode('utf-8'))
             body.extend(b'Content-Disposition: form-data; name="file"; filename="audio.wav"\r\n')
             body.extend(b'Content-Type: audio/wav\r\n\r\n')
@@ -102,8 +142,27 @@ class ParakeetTranscriber:
                     logger.info(f"[Groq Cloud STT ⚡ 80ms]: '{transcript}'")
                 return transcript
         except Exception as err:
-            logger.warning(f"[Groq Cloud STT] Error/fallback: {err}")
+            err_str = str(err)
+            if "429" in err_str:
+                self.groq_cooldown_until = time.time() + 6.0
+                logger.warning(f"[Groq Cloud STT] Rate limit (HTTP 429). Cooldown 6s activated, using local fallback.")
+            else:
+                logger.warning(f"[Groq Cloud STT] Error/fallback: {err}")
             return ""
+
+    def clean_hallucination(self, text: str) -> str:
+        if not text:
+            return ""
+        lower = text.lower().strip()
+        hallucinations = [
+          'sous-titrage', 'radio-canada', 'amara.org', 'subtitles by', 'thank you for watching',
+          'subscribe to', 'pog.org', 'pyscript', 'psyche', 'shizuk', 'particip', 'mbc',
+          'tentical', 'dicenical', 'ssshh'
+        ]
+        if any(h in lower for h in hallucinations):
+            logger.info(f"[ASR Cleaner] Dropped subtitle hallucination: '{text}'")
+            return ""
+        return text
 
     def process_audio_buffer(self, audio_bytes: bytes) -> tuple:
         """
@@ -115,18 +174,27 @@ class ParakeetTranscriber:
         # 1. Try Groq Cloud Whisper (<90ms ultra-low latency)
         if self.groq_api_key:
             groq_text = self.transcribe_groq_cloud(audio_bytes)
-            if groq_text:
-                return groq_text, "groq-whisper-v3-turbo"
+            clean_text = self.clean_hallucination(groq_text)
+            if clean_text:
+                return clean_text, "groq-whisper-v3-turbo"
 
         # 2. Local Faster-Whisper Fallback
         if self.use_faster_whisper and self.model:
             try:
-                audio_np = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-                segments, _ = self.model.transcribe(audio_np, beam_size=1, language="en", vad_filter=True)
-                transcript = " ".join([segment.text for segment in segments]).strip()
-                if transcript:
-                    return transcript, "local-faster-whisper"
-            except Exception as err:
-                logger.error(f"Inference error in faster-whisper: {err}")
+                norm_bytes = normalize_audio(audio_bytes)
+                audio_np = np.frombuffer(norm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+                segments, _ = self.model.transcribe(
+                    audio_np,
+                    beam_size=1,
+                    language="en",
+                    vad_filter=True,
+                    vad_parameters=dict(min_silence_duration_ms=250)
+                )
+                text = " ".join([segment.text for segment in segments]).strip()
+                clean_text = self.clean_hallucination(text)
+                if clean_text:
+                    return clean_text, "local-faster-whisper"
+            except Exception as e:
+                logger.error(f"[Local Whisper Engine Error]: {e}")
 
         return "", "none"

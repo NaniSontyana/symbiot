@@ -64,14 +64,18 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     activeSpeakerRef.current = activeSpeaker;
   }, [activeSpeaker]);
 
+  const reconnectTimerRef = useRef(null);
+
   // Initialize WebSocket connection to ASR Microservice
   const connectAsrSocket = useCallback(() => {
     try {
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+
       const ws = new WebSocket(asrWsUrl || 'ws://localhost:8000/ws/transcribe');
       socketRef.current = ws;
 
       ws.onopen = () => {
-        console.log('[ASR Streamer] Connected to Python ASR Service');
+        console.log('[ASR Streamer] Connected to Python ASR Service on port 8000');
       };
 
       ws.onmessage = (event) => {
@@ -89,14 +93,20 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
       };
 
       ws.onclose = () => {
-        console.log('[ASR Streamer] Disconnected from ASR Service');
+        console.log('[ASR Streamer] Disconnected from ASR Service. Reconnecting in 2s...');
+        reconnectTimerRef.current = setTimeout(() => {
+          connectAsrSocket();
+        }, 2000);
       };
 
       ws.onerror = (err) => {
         console.warn('[ASR Streamer] ASR WS Error:', err);
       };
     } catch (e) {
-      console.warn('[ASR Streamer] Could not connect to ASR WS:', e);
+      console.warn('[ASR Streamer] Could not connect to ASR WS, retrying in 2s:', e);
+      reconnectTimerRef.current = setTimeout(() => {
+        connectAsrSocket();
+      }, 2000);
     }
   }, [asrWsUrl]);
 
@@ -104,6 +114,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     connectAsrSocket();
 
     return () => {
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       stopStreaming();
       stopSystemAudioShare();
       if (socketRef.current) {
@@ -130,9 +141,16 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
       const audioCtx = new AudioCtx();
       audioCtxRef.current = audioCtx;
 
-      if (audioCtx.state === 'suspended') {
-        await audioCtx.resume();
-      }
+      const resumeAudio = async () => {
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+          console.log('[ASR Streamer] AudioContext resumed successfully');
+        }
+      };
+
+      await resumeAudio();
+      window.addEventListener('click', resumeAudio, { once: true });
+      window.addEventListener('keydown', resumeAudio, { once: true });
 
       const source = audioCtx.createMediaStreamSource(stream);
       const muteGain = audioCtx.createGain();
@@ -199,50 +217,8 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
         muteGain.connect(audioCtx.destination);
       }
 
-      // Initialize WebSpeech SpeechRecognition fallback if available
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        try {
-          const rec = new SpeechRecognition();
-          rec.continuous = true;
-          rec.interimResults = true;
-          rec.lang = 'en-US';
-
-          rec.onresult = (event) => {
-            let interim = '';
-            let final = '';
-            for (let i = event.resultIndex; i < event.results.length; i++) {
-              const transcriptText = event.results[i][0].transcript;
-              if (event.results[i].isFinal) {
-                final += transcriptText;
-              } else {
-                interim += transcriptText;
-              }
-            }
-            if (interim) setLiveTranscript(interim);
-            if (final && final.trim()) {
-              setLiveTranscript(final);
-              if (onTranscriptRef.current) {
-                onTranscriptRef.current(final, activeSpeakerRef.current || 'interviewer');
-              }
-            }
-          };
-
-          rec.onend = () => {
-            if (mediaStreamRef.current && recognitionRef.current) {
-              try { rec.start(); } catch (e) {}
-            }
-          };
-
-          rec.start();
-          recognitionRef.current = rec;
-        } catch (recErr) {
-          console.log('[WebSpeech] Init skipped:', recErr.message);
-        }
-      }
-
       setIsStreaming(true);
-      console.log('[ASR Streamer] Live mic streaming active (16kHz resampled)');
+      console.log('[ASR Streamer] Live mic streaming active (16kHz PCM Groq Whisper ASR)');
     } catch (err) {
       console.error('[ASR Streamer] Microphone access error:', err);
       setMicError(err.name === 'NotAllowedError' ? 'Microphone permission denied.' : err.message);
