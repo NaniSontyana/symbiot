@@ -251,16 +251,34 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
   };
 
   // Start capture of System Audio (Zoom, Meet, Browser Tab) for pure interviewer audio
-  const startSystemAudioShare = async () => {
+  const startSystemAudioShare = async (sourceId = null) => {
     try {
-      const displayStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
-      });
+      let displayStream;
+      if (sourceId && navigator.mediaDevices.getUserMedia) {
+        displayStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            mandatory: {
+              chromeMediaSource: 'desktop',
+              chromeMediaSourceId: sourceId
+            }
+          },
+          video: {
+            mandatory: {
+              chromeMediaSource: 'desktop',
+              chromeMediaSourceId: sourceId
+            }
+          }
+        });
+      } else {
+        displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
+        });
+      }
 
       const audioTracks = displayStream.getAudioTracks();
       if (audioTracks.length === 0) {

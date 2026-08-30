@@ -3,6 +3,7 @@ import Header from './components/Header';
 import AudioVisualizer from './components/AudioVisualizer';
 import CopilotAnswerCard from './components/CopilotAnswerCard';
 import CandidateContextModal from './components/CandidateContextModal';
+import DesktopScreenModal from './components/DesktopScreenModal';
 import FloatingPoint from './components/FloatingPoint';
 import { useAudioStreamer } from './hooks/useAudioStreamer';
 import { Send, Play, HelpCircle } from 'lucide-react';
@@ -23,6 +24,30 @@ export default function App() {
   const [bgMode, setBgMode] = useState('transparent');
   const [selectedModel, setSelectedModel] = useState('gemini-1.5-flash');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isScreenModalOpen, setIsScreenModalOpen] = useState(false);
+
+  const [displaysList, setDisplaysList] = useState([]);
+  const [activeDisplayIndex, setActiveDisplayIndex] = useState(0);
+
+  // Fetch displays from Electron on load and listen for display switch events
+  useEffect(() => {
+    if (window.electronAPI && window.electronAPI.getDisplays) {
+      window.electronAPI.getDisplays().then((displays) => {
+        if (displays && displays.length) {
+          setDisplaysList(displays);
+        }
+      }).catch(() => {});
+    }
+
+    if (window.electronAPI && window.electronAPI.onDisplaySwitched) {
+      const unsubDisplay = window.electronAPI.onDisplaySwitched((data) => {
+        if (data && typeof data.index === 'number') {
+          setActiveDisplayIndex(data.index);
+        }
+      });
+      return unsubDisplay;
+    }
+  }, []);
 
   // Subscribe to Electron global hotkeys (Alt+S, Alt+C, Alt+H)
   useEffect(() => {
@@ -40,6 +65,18 @@ export default function App() {
         if (unsubClickThrough) unsubClickThrough();
       };
     }
+  }, []);
+
+  // Web fallback hotkey listener (Alt+D to open Screen Selector)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.altKey && (e.key === 'd' || e.key === 'D')) {
+        e.preventDefault();
+        setIsScreenModalOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
   // Candidate API Key & Resume Context state
@@ -149,7 +186,20 @@ export default function App() {
   }, [handleAskQuestion]);
 
   // Audio streamer hook for direct mic ASR connection
-  const { isStreaming, startStreaming, stopStreaming, liveTranscript, audioLevel, micError, activeSpeaker, switchSpeaker, resetAsrBuffer } = useAudioStreamer(
+  const {
+    isStreaming,
+    startStreaming,
+    stopStreaming,
+    isSystemAudioActive,
+    startSystemAudioShare,
+    stopSystemAudioShare,
+    liveTranscript,
+    audioLevel,
+    micError,
+    activeSpeaker,
+    switchSpeaker,
+    resetAsrBuffer
+  } = useAudioStreamer(
     'ws://localhost:8000/ws/transcribe',
     (detectedText, speaker) => {
       if (detectedText) {
@@ -182,6 +232,14 @@ export default function App() {
       stopStreaming();
     } else {
       startStreaming();
+    }
+  };
+
+  const handleToggleSystemAudio = (sourceId = null) => {
+    if (isSystemAudioActive) {
+      stopSystemAudioShare();
+    } else {
+      startSystemAudioShare(sourceId);
     }
   };
 
@@ -294,6 +352,19 @@ export default function App() {
             setStealthMode={setStealthMode}
             clickThrough={clickThrough}
             setClickThrough={setClickThrough}
+            displaysList={displaysList}
+            activeDisplayIndex={activeDisplayIndex}
+            onSwitchDisplay={() => {
+              if (window.electronAPI && displaysList.length > 1) {
+                const nextIndex = (activeDisplayIndex + 1) % displaysList.length;
+                const targetDisplay = displaysList[nextIndex];
+                if (targetDisplay && window.electronAPI.switchDisplay) {
+                  window.electronAPI.switchDisplay(targetDisplay.id);
+                  setActiveDisplayIndex(nextIndex);
+                }
+              }
+            }}
+            onOpenScreenModal={() => setIsScreenModalOpen(true)}
             onOpenSettings={() => setIsModalOpen(true)}
             onCollapse={() => handleToggleCollapse(true)}
             onExitApp={handleExitApp}
@@ -371,6 +442,21 @@ export default function App() {
             onClose={() => setIsModalOpen(false)}
             currentApiKey={apiKey}
             onSaveContext={handleSaveSettings}
+          />
+
+          <DesktopScreenModal
+            isOpen={isScreenModalOpen}
+            onClose={() => setIsScreenModalOpen(false)}
+            displaysList={displaysList}
+            activeDisplayIndex={activeDisplayIndex}
+            onSelectDisplay={(idx, source) => {
+              setActiveDisplayIndex(idx);
+              if (window.electronAPI && window.electronAPI.switchDisplay && source.display_id) {
+                window.electronAPI.switchDisplay(source.display_id);
+              }
+            }}
+            isSystemAudioActive={isSystemAudioActive}
+            onToggleSystemAudio={handleToggleSystemAudio}
           />
         </div>
       )}

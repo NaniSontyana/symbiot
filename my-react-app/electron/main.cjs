@@ -1,4 +1,4 @@
-const { app, BrowserWindow, globalShortcut, ipcMain } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, screen, session, desktopCapturer } = require('electron');
 const path = require('path');
 
 let mainWindow;
@@ -37,6 +37,21 @@ function createWindow() {
 app.whenReady().then(() => {
   createWindow();
 
+  // Configure Electron Display & Screen Share Request Handler for getDisplayMedia
+  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
+      if (sources && sources.length > 0) {
+        callback({ video: sources[0], audio: 'loopback' });
+      } else {
+        callback({});
+      }
+    } catch (err) {
+      console.error('[Electron] displayMediaRequestHandler error:', err);
+      callback({});
+    }
+  });
+
   let isClickThrough = false;
 
   // Global Keyboard Shortcuts
@@ -73,6 +88,23 @@ app.whenReady().then(() => {
     }
   });
 
+  globalShortcut.register('CommandOrControl+Alt+D', () => {
+    if (mainWindow) {
+      const displays = screen.getAllDisplays();
+      if (displays.length <= 1) return;
+      const currentBounds = mainWindow.getBounds();
+      const currentDisplay = screen.getDisplayMatching(currentBounds);
+      const currentIndex = displays.findIndex(d => d.id === currentDisplay.id);
+      const nextIndex = (currentIndex + 1) % displays.length;
+      const nextDisplay = displays[nextIndex];
+      const { x, y, width, height } = nextDisplay.bounds;
+      const newX = Math.round(x + (width - currentBounds.width) / 2);
+      const newY = Math.round(y + (height - currentBounds.height) / 2);
+      mainWindow.setPosition(newX, newY);
+      mainWindow.webContents.send('display-switched', { id: nextDisplay.id, index: nextIndex });
+    }
+  });
+
   globalShortcut.register('CommandOrControl+Alt+X', () => {
     app.quit();
   });
@@ -80,6 +112,50 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+// IPC Event Listeners
+ipcMain.handle('get-displays', () => {
+  const displays = screen.getAllDisplays();
+  const primary = screen.getPrimaryDisplay();
+  return displays.map((d, index) => ({
+    id: d.id,
+    label: `Display ${index + 1} (${d.bounds.width}x${d.bounds.height})${d.id === primary.id ? ' - Primary' : ''}`,
+    bounds: d.bounds,
+    isPrimary: d.id === primary.id,
+  }));
+});
+
+ipcMain.handle('get-desktop-sources', async () => {
+  try {
+    const { desktopCapturer } = require('electron');
+    const sources = await desktopCapturer.getSources({
+      types: ['screen', 'window'],
+      thumbnailSize: { width: 320, height: 180 }
+    });
+    return sources.map(src => ({
+      id: src.id,
+      name: src.name,
+      thumbnail: src.thumbnail ? src.thumbnail.toDataURL() : '',
+      display_id: src.display_id
+    }));
+  } catch (err) {
+    console.error('Error fetching desktop sources:', err);
+    return [];
+  }
+});
+
+ipcMain.on('switch-display', (event, displayId) => {
+  if (!mainWindow) return;
+  const displays = screen.getAllDisplays();
+  const targetDisplay = displays.find(d => d.id === displayId) || displays[0];
+  if (targetDisplay) {
+    const { x, y, width, height } = targetDisplay.bounds;
+    const winBounds = mainWindow.getBounds();
+    const newX = Math.round(x + (width - winBounds.width) / 2);
+    const newY = Math.round(y + (height - winBounds.height) / 2);
+    mainWindow.setPosition(newX, newY);
+  }
 });
 
 // IPC Event Listeners

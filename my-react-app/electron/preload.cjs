@@ -7,6 +7,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   resizeWindow: (dimensions) => ipcRenderer.send('resize-window', dimensions),
   closeApp: () => ipcRenderer.send('close-app'),
 
+  // Desktop Screen Switching APIs
+  getDisplays: () => ipcRenderer.invoke('get-displays'),
+  getDesktopSources: () => ipcRenderer.invoke('get-desktop-sources'),
+  switchDisplay: (displayId) => ipcRenderer.send('switch-display', displayId),
+  onDisplaySwitched: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('display-switched', handler);
+    return () => ipcRenderer.removeListener('display-switched', handler);
+  },
+
   // Global hotkey listeners
   onHotkeyToggleStealth: (callback) => {
     const handler = (_event, data) => callback(data);

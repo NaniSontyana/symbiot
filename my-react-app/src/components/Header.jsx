@@ -1,5 +1,5 @@
 import React from 'react';
-import { Shield, Wifi, WifiOff, Settings, Minimize2, X, MousePointerClick } from 'lucide-react';
+import { Shield, Wifi, WifiOff, Settings, Minimize2, X, MousePointerClick, Monitor } from 'lucide-react';
 import SymbiotLogo from './SymbiotLogo';
 
 export default function Header({
@@ -8,10 +8,28 @@ export default function Header({
   setStealthMode,
   clickThrough,
   setClickThrough,
+  displaysList = [],
+  activeDisplayIndex = 0,
+  onSwitchDisplay,
+  onOpenScreenModal,
   onOpenSettings,
   onCollapse,
   onExitApp
 }) {
+  const handleCycleDisplay = () => {
+    if (onOpenScreenModal) {
+      onOpenScreenModal();
+    } else if (onSwitchDisplay) {
+      onSwitchDisplay();
+    } else if (window.electronAPI && displaysList.length > 1) {
+      const nextIndex = (activeDisplayIndex + 1) % displaysList.length;
+      const targetDisplay = displaysList[nextIndex];
+      if (targetDisplay && window.electronAPI.switchDisplay) {
+        window.electronAPI.switchDisplay(targetDisplay.id);
+      }
+    }
+  };
+
   return (
     <header
       className="glass-panel"
@@ -51,6 +69,7 @@ export default function Header({
         }}>
           <span><strong style={{ color: '#34d399' }}>Alt+S</strong> Stealth</span>
           <span><strong style={{ color: '#60a5fa' }}>Alt+C</strong> Pass-Through</span>
+          <span><strong style={{ color: '#a78bfa' }}>Alt+D</strong> Switch Screen</span>
           <span><strong style={{ color: '#f59e0b' }}>Alt+H</strong> Hide</span>
         </div>
       </div>
@@ -74,6 +93,30 @@ export default function Header({
           {isConnected ? <Wifi size={13} /> : <WifiOff size={13} />}
           <span className="btn-label-desktop">{isConnected ? 'Online' : 'Offline'}</span>
         </div>
+
+        {/* Desktop Screen Switcher Toggle Button */}
+        <button
+          onClick={handleCycleDisplay}
+          className="btn-secondary"
+          title="Switch Desktop Screen (Alt+D)"
+          style={{
+            height: '28px',
+            padding: '0 8px',
+            fontSize: '0.74rem',
+            borderRadius: '7px',
+            borderColor: 'rgba(167, 139, 250, 0.4)',
+            color: '#c084fc',
+            background: 'rgba(167, 139, 250, 0.12)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px'
+          }}
+        >
+          <Monitor size={13} />
+          <span className="btn-label-desktop">
+            {displaysList && displaysList.length > 1 ? `Screen ${activeDisplayIndex + 1}` : 'Screen'}
+          </span>
+        </button>
 
         {/* Click-Through Mouse Pass-Through Toggle */}
         <button
