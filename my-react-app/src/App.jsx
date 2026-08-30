@@ -496,15 +496,18 @@ export default function App() {
   };
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: 'transparent',
-      transition: 'background 0.3s ease',
-      display: 'flex',
-      alignItems: isCollapsed ? 'flex-start' : 'stretch',
-      justifyContent: isCollapsed ? 'flex-start' : 'stretch',
-      padding: isCollapsed ? '8px' : '0'
-    }}>
+    <div
+      className={clickThrough ? 'click-through-active' : ''}
+      style={{
+        minHeight: '100vh',
+        background: 'transparent',
+        transition: 'background 0.3s ease',
+        display: 'flex',
+        alignItems: isCollapsed ? 'flex-start' : 'stretch',
+        justifyContent: isCollapsed ? 'flex-start' : 'stretch',
+        padding: isCollapsed ? '8px' : '0'
+      }}
+    >
       {/* Collapsed View: Floating Point Pill Badge */}
       {isCollapsed ? (
         <FloatingPoint

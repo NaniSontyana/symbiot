@@ -96,6 +96,26 @@ html, body {
   color: #ffffff;
 }
 
+/* Click-Through Transparent Overlay Pointer Events Rules */
+.click-through-active {
+  pointer-events: none !important;
+}
+
+.click-through-active .glass-panel,
+.click-through-active .main-stage-grid {
+  pointer-events: none !important;
+}
+
+.click-through-active button,
+.click-through-active input,
+.click-through-active textarea,
+.click-through-active select,
+.click-through-active a,
+.click-through-active [role="button"],
+.click-through-active .interactive-element {
+  pointer-events: auto !important;
+}
+
 /* Custom Stealth Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
