@@ -31,24 +31,31 @@ export function setupCopilotWebSocket(server) {
         if (payload.type === 'transcript_question') {
           const { questionText, userId, apiKey, resumeContext, selectedModel } = payload;
           
-          const lower = questionText ? questionText.toLowerCase().trim() : '';
-          const isQuestion = lower.endsWith('?') || ['what', 'how', 'why', 'can you', 'could you', 'explain', 'tell me', 'describe', 'difference', 'compare', 'where', 'when', 'which', 'would you'].some(w => lower.includes(w));
-          
-          if (!isQuestion && !questionText.includes('?')) {
-            console.log(`[Copilot WS] Ignored non-question candidate speech prose: "${questionText}"`);
+          if (!questionText || !questionText.trim()) {
             return;
           }
 
-          // Rapid question change interruption: cancel previous active stream immediately
+          const cleanQ = questionText.trim();
+          const lowerQ = cleanQ.toLowerCase();
+          const words = lowerQ.split(/\s+/);
+
+          // Ignore short filler noise ("Thank you", "Huh?", "Okay") from cancelling active streams
+          const isFiller = ['thank you', 'thanks', 'okay', 'ok', 'hello', 'hi', 'huh', 'particip', 'sous-titrage'].some(f => lowerQ === f || lowerQ.startsWith(f));
+          if (cleanQ.length < 10 && words.length < 3 && !cleanQ.includes('?') && isFiller) {
+            console.log(`[Copilot WS] Ignored short filler noise from stream interruption: "${cleanQ}"`);
+            return;
+          }
+
+          // Rapid question change interruption for new distinct questions
           if (currentAbortSignal) {
             currentAbortSignal.aborted = true;
-            console.log('[Copilot WS] ⚡ Rapid question change! Cancelled previous streaming answer.');
+            console.log('[Copilot WS] ⚡ Rapid question change! Cancelled previous streaming answer for new question.');
           }
 
           const abortHandle = { aborted: false };
           currentAbortSignal = abortHandle;
 
-          console.log(`[Copilot WS] Received Question: "${questionText}" [Model: ${selectedModel || 'gemini-1.5-flash'}]`);
+          console.log(`[Copilot WS] Processing Question: "${cleanQ}" [Model: ${selectedModel || 'gemini-1.5-flash'}]`);
 
           // Notify frontend that generation started
           ws.send(JSON.stringify({ type: 'start_generating' }));

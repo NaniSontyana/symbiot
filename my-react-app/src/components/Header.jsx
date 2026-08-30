@@ -34,7 +34,7 @@ export default function Header({
     <header
       className="glass-panel"
       style={{
-        padding: '8px 14px',
+        padding: '6px 14px',
         marginBottom: '10px',
         display: 'flex',
         alignItems: 'center',
@@ -42,83 +42,66 @@ export default function Header({
         position: 'relative',
         WebkitAppRegion: 'drag',
         cursor: 'grab',
-        height: '46px',
+        height: '42px',
         boxSizing: 'border-box'
       }}
     >
-      {/* 1. Left Branding & Hotkey Legend */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', WebkitAppRegion: 'drag' }}>
-        <SymbiotLogo size={30} />
-        <h1 style={{ fontSize: '1.08rem', fontWeight: 800, letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '6px', margin: 0, color: '#ffffff' }}>
+      {/* 1. Left Branding */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', WebkitAppRegion: 'drag' }}>
+        <SymbiotLogo size={24} />
+        <h1 style={{ fontSize: '1.02rem', fontWeight: 800, letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: '6px', margin: 0, color: '#ffffff' }}>
           Symbiot
-          <span style={{ fontSize: '0.64rem', fontWeight: 600, padding: '1px 6px', borderRadius: '8px', background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
+          <span style={{ fontSize: '0.62rem', fontWeight: 600, padding: '1px 5px', borderRadius: '6px', background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', border: '1px solid rgba(16, 185, 129, 0.3)' }}>
             v2.0
           </span>
         </h1>
-
-        {/* Global Hotkeys Legend Badge */}
-        <div className="hotkey-legend-badge" style={{
-          fontSize: '0.66rem',
-          color: 'rgba(255, 255, 255, 0.5)',
-          background: 'rgba(255, 255, 255, 0.04)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
-          padding: '2px 8px',
-          borderRadius: '6px',
-          display: 'flex',
-          gap: '8px'
-        }}>
-          <span><strong style={{ color: '#34d399' }}>Alt+S</strong> Stealth</span>
-          <span><strong style={{ color: '#60a5fa' }}>Alt+C</strong> Pass-Through</span>
-          <span><strong style={{ color: '#a78bfa' }}>Alt+D</strong> Switch Screen</span>
-          <span><strong style={{ color: '#f59e0b' }}>Alt+H</strong> Hide</span>
-        </div>
       </div>
 
-      {/* 2. Right System Action Buttons */}
+      {/* 2. Right System Action Controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', WebkitAppRegion: 'no-drag' }}>
-        {/* Connection Status */}
-        <div style={{
-          height: '28px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '4px',
-          padding: '0 8px',
-          borderRadius: '7px',
-          background: isConnected ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-          border: isConnected ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
-          color: isConnected ? '#10b981' : '#ef4444',
-          fontSize: '0.74rem',
-          fontWeight: 600
-        }}>
-          {isConnected ? <Wifi size={13} /> : <WifiOff size={13} />}
-          <span className="btn-label-desktop">{isConnected ? 'Online' : 'Offline'}</span>
+        {/* Connection Status Pill */}
+        <div 
+          title={isConnected ? "Copilot Gateway Online (ws://localhost:5000)" : "Copilot Gateway Offline"}
+          style={{
+            height: '26px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '5px',
+            padding: '0 8px',
+            borderRadius: '6px',
+            background: isConnected ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+            border: isConnected ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
+            color: isConnected ? '#10b981' : '#ef4444',
+            fontSize: '0.72rem',
+            fontWeight: 600
+          }}
+        >
+          {isConnected ? <Wifi size={12} /> : <WifiOff size={12} />}
+          <span>{isConnected ? 'Online' : 'Offline'}</span>
         </div>
 
-        {/* Desktop Screen Switcher Toggle Button */}
+        {/* Display / Screen Selector Button */}
         <button
           onClick={handleCycleDisplay}
           className="btn-secondary"
-          title="Switch Desktop Screen (Alt+D)"
+          title={`Switch Display Screen (Alt+D) - Current: Screen ${activeDisplayIndex + 1}`}
           style={{
-            height: '28px',
-            padding: '0 8px',
-            fontSize: '0.74rem',
-            borderRadius: '7px',
+            height: '26px',
+            width: '28px',
+            padding: 0,
+            borderRadius: '6px',
             borderColor: 'rgba(167, 139, 250, 0.4)',
             color: '#c084fc',
             background: 'rgba(167, 139, 250, 0.12)',
             display: 'flex',
             alignItems: 'center',
-            gap: '4px'
+            justifyContent: 'center'
           }}
         >
           <Monitor size={13} />
-          <span className="btn-label-desktop">
-            {displaysList && displaysList.length > 1 ? `Screen ${activeDisplayIndex + 1}` : 'Screen'}
-          </span>
         </button>
 
-        {/* Click-Through Mouse Pass-Through Toggle */}
+        {/* Click-Through Pass-Through Toggle */}
         <button
           onClick={() => {
             const nextVal = !clickThrough;
@@ -128,59 +111,82 @@ export default function Header({
             }
           }}
           className="btn-secondary"
-          title="Toggle Mouse Click-Through Pass-Through (Alt+C)"
+          title={`Toggle Mouse Pass-Through (Alt+C) - ${clickThrough ? 'ON' : 'OFF'}`}
           style={{
-            height: '28px',
-            padding: '0 8px',
-            fontSize: '0.74rem',
-            borderRadius: '7px',
+            height: '26px',
+            width: '28px',
+            padding: 0,
+            borderRadius: '6px',
             borderColor: clickThrough ? '#60a5fa' : 'var(--panel-border)',
-            color: clickThrough ? '#60a5fa' : 'var(--text-main)',
+            color: clickThrough ? '#60a5fa' : 'var(--text-muted)',
             background: clickThrough ? 'rgba(96, 165, 250, 0.15)' : 'transparent',
             display: 'flex',
             alignItems: 'center',
-            gap: '4px'
+            justifyContent: 'center'
           }}
         >
           <MousePointerClick size={13} />
-          <span className="btn-label-desktop">{clickThrough ? 'Pass-Through ON' : 'Pass-Through'}</span>
         </button>
 
-        {/* Stealth Overlay Toggle */}
+        {/* Stealth Mode Toggle */}
         <button
           onClick={() => setStealthMode(!stealthMode)}
           className="btn-secondary"
-          title="Toggle Teleprompter Size (Alt+S)"
+          title={`Toggle Stealth Teleprompter Mode (Alt+S) - ${stealthMode ? 'Stealth ON' : 'Standard'}`}
           style={{
-            height: '28px',
-            padding: '0 8px',
-            fontSize: '0.74rem',
-            borderRadius: '7px',
+            height: '26px',
+            width: '28px',
+            padding: 0,
+            borderRadius: '6px',
             borderColor: stealthMode ? 'var(--primary-accent)' : 'var(--panel-border)',
-            color: stealthMode ? 'var(--primary-accent)' : 'var(--text-main)',
+            color: stealthMode ? 'var(--primary-accent)' : 'var(--text-muted)',
+            background: stealthMode ? 'rgba(16, 185, 129, 0.15)' : 'transparent',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
+        >
+          <Shield size={13} />
+        </button>
+
+        {/* Candidate Resume & Settings Modal Button */}
+        <button
+          onClick={onOpenSettings}
+          className="btn-secondary"
+          title="Candidate Resume & Context Settings"
+          style={{
+            height: '26px',
+            padding: '0 8px',
+            fontSize: '0.72rem',
+            borderRadius: '6px',
             display: 'flex',
             alignItems: 'center',
             gap: '4px'
           }}
         >
-          <Shield size={13} />
-          <span className="btn-label-desktop">{stealthMode ? 'Stealth ON' : 'Standard'}</span>
+          <Settings size={12} />
+          <span>Resume</span>
         </button>
 
-        {/* Context Settings */}
-        <button onClick={onOpenSettings} className="btn-secondary" style={{ height: '28px', padding: '0 8px', fontSize: '0.74rem', borderRadius: '7px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <Settings size={13} />
-          <span className="btn-label-desktop">Resume</span>
-        </button>
-
-        {/* Collapse to Floating Point Button */}
+        {/* Collapse Button */}
         <button
           onClick={onCollapse}
           className="btn-secondary"
           title="Collapse to Floating Badge"
-          style={{ height: '28px', padding: '0 8px', borderRadius: '7px', background: 'rgba(16, 185, 129, 0.15)', borderColor: 'rgba(16, 185, 129, 0.3)', color: '#10b981', display: 'flex', alignItems: 'center' }}
+          style={{
+            height: '26px',
+            width: '26px',
+            padding: 0,
+            borderRadius: '6px',
+            background: 'rgba(16, 185, 129, 0.12)',
+            borderColor: 'rgba(16, 185, 129, 0.3)',
+            color: '#10b981',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
         >
-          <Minimize2 size={13} />
+          <Minimize2 size={12} />
         </button>
 
         {/* Exit Application Button */}
@@ -188,9 +194,20 @@ export default function Header({
           onClick={onExitApp}
           className="btn-secondary"
           title="Close Application"
-          style={{ height: '28px', padding: '0 8px', borderRadius: '7px', background: 'rgba(239, 68, 68, 0.15)', borderColor: 'rgba(239, 68, 68, 0.3)', color: '#ef4444', display: 'flex', alignItems: 'center' }}
+          style={{
+            height: '26px',
+            width: '26px',
+            padding: 0,
+            borderRadius: '6px',
+            background: 'rgba(239, 68, 68, 0.12)',
+            borderColor: 'rgba(239, 68, 68, 0.3)',
+            color: '#ef4444',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
         >
-          <X size={13} />
+          <X size={12} />
         </button>
       </div>
     </header>

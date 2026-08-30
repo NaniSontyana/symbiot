@@ -2,9 +2,9 @@ import numpy as np
 
 class VoiceActivityDetector:
     """
-    Enhanced Voice Activity Detector (VAD) with energy thresholding and adaptive silence tracking
+    Enhanced Voice Activity Detector (VAD) with adaptive energy thresholding and silence tracking
     """
-    def __init__(self, energy_threshold: float = 0.0001, silence_duration_frames: int = 2):
+    def __init__(self, energy_threshold: float = 0.00002, silence_duration_frames: int = 4):
         self.energy_threshold = energy_threshold
         self.silence_duration_frames = silence_duration_frames
         self.consecutive_silence = 0
@@ -12,12 +12,17 @@ class VoiceActivityDetector:
     def calculate_energy(self, audio_chunk: bytes) -> float:
         if not audio_chunk:
             return 0.0
-        
+
+        # Ensure byte length is multiple of 2 for Int16 alignment
+        aligned_len = len(audio_chunk) - (len(audio_chunk) % 2)
+        if aligned_len == 0:
+            return 0.0
+
         # Convert raw bytes to 16-bit PCM numpy float array normalized to [-1.0, 1.0]
-        audio_data = np.frombuffer(audio_chunk, dtype=np.int16).astype(np.float32) / 32768.0
+        audio_data = np.frombuffer(audio_chunk[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0
         if len(audio_data) == 0:
             return 0.0
-            
+
         energy = np.mean(audio_data ** 2)
         return float(energy)
 

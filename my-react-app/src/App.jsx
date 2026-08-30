@@ -115,8 +115,8 @@ export default function App() {
 
   // Trigger real-time question generation to Copilot engine
   const handleAskQuestion = useCallback((questionStr) => {
-    const query = questionStr || customQuestion;
-    if (!query || !query.trim()) return;
+    const query = (typeof questionStr === 'string' && questionStr.trim()) ? questionStr.trim() : customQuestion.trim();
+    if (!query) return;
 
     if (isCollapsed) {
       handleToggleCollapse(false);
@@ -127,36 +127,34 @@ export default function App() {
     setIsGenerating(true);
     setLatencyMs(Math.floor(Math.random() * 40) + 160);
 
-    // Automatically switch to Applicant mode while answer is being delivered
-    if (switchSpeakerRef.current) {
-      switchSpeakerRef.current('applicant');
-    }
+    const payload = JSON.stringify({
+      type: 'transcript_question',
+      questionText: query,
+      userId: '00000000-0000-0000-0000-000000000000',
+      apiKey: apiKey || null,
+      resumeContext: candidateContext || null,
+      selectedModel: selectedModel || 'gemini-1.5-flash',
+    });
 
-    const sendPayload = () => {
-      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-        socketRef.current.send(
-          JSON.stringify({
-            type: 'transcript_question',
-            questionText: query,
-            userId: '00000000-0000-0000-0000-000000000000',
-            apiKey: apiKey || null,
-            resumeContext: candidateContext || null,
-            selectedModel: selectedModel || 'gemini-1.5-flash',
-          })
-        );
+    const sendPayload = (ws) => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(payload);
+        console.log(`[Question Simulator] Sent question: "${query}"`);
       }
     };
 
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      sendPayload();
+      sendPayload(socketRef.current);
     } else {
-      console.warn('[Copilot WS] Gateway WebSocket disconnected. Reconnecting to port 5000...');
+      console.warn('[Copilot WS] Gateway WebSocket reconnecting on port 5000...');
       const newWs = new WebSocket('ws://localhost:5000/ws/copilot');
       socketRef.current = newWs;
+
       newWs.onopen = () => {
         setIsConnected(true);
-        sendPayload();
+        sendPayload(newWs);
       };
+
       newWs.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
@@ -167,11 +165,6 @@ export default function App() {
             setResponseText((prev) => prev + data.token);
           } else if (data.type === 'end_generating') {
             setIsGenerating(false);
-            if (resetAsrBufferRef.current) resetAsrBufferRef.current();
-            // Automatically switch back to Interviewer listening mode after answer is read
-            setTimeout(() => {
-              if (switchSpeakerRef.current) switchSpeakerRef.current('interviewer');
-            }, 4000);
           }
         } catch (e) {}
       };
@@ -184,6 +177,41 @@ export default function App() {
   useEffect(() => {
     handleAskQuestionRef.current = handleAskQuestion;
   }, [handleAskQuestion]);
+
+  // Intelligent Interview Question Detector Filter for ASR Audio Stream
+  const isInterviewQuestion = (text, speaker) => {
+    if (!text) return false;
+    const cleanText = text.trim();
+    const lower = cleanText.toLowerCase();
+
+    // 1. Only evaluate when speaker is interviewer/system (ignore applicant speech)
+    if (speaker === 'applicant') return false;
+
+    // 2. Minimum length check (must be at least 12 chars and 3 words)
+    const words = lower.split(/\s+/);
+    if (cleanText.length < 12 || words.length < 3) return false;
+
+    // 3. Exclude casual filler phrases & pleasantries
+    const fillerPhrases = [
+      'thank you', 'thanks', 'can you hear me', 'am i audible', 'hello', 'hi there',
+      'good morning', 'good afternoon', 'good evening', 'okay cool', 'sounds good',
+      'makes sense', 'see you', 'bye for now', 'yes i can', 'no problem', 'right right'
+    ];
+    if (fillerPhrases.some(phrase => lower.includes(phrase))) return false;
+
+    // 4. Must contain a question mark OR an explicit technical/interview prompt trigger
+    const questionTriggers = [
+      'what', 'how', 'why', 'where', 'when', 'which', 'who', 'whose', 'whom',
+      'can you', 'could you', 'would you', 'explain', 'tell me', 'describe',
+      'difference', 'compare', 'walk me through', 'design', 'implement',
+      'optimize', 'architecture', 'in your experience', 'have you worked'
+    ];
+
+    const hasQuestionMark = cleanText.includes('?');
+    const hasTriggerKeyword = questionTriggers.some(trigger => lower.includes(trigger));
+
+    return hasQuestionMark || hasTriggerKeyword;
+  };
 
   // Audio streamer hook for direct mic ASR connection
   const {
@@ -203,16 +231,13 @@ export default function App() {
     'ws://localhost:8000/ws/transcribe',
     (detectedText, speaker) => {
       if (detectedText) {
-        const lower = detectedText.toLowerCase().trim();
-        const isQuestion = lower.endsWith('?') || ['what', 'how', 'why', 'can you', 'could you', 'explain', 'tell me', 'describe', 'difference', 'compare', 'where', 'when', 'which', 'would you'].some(w => lower.includes(w));
-
-        if ((!speaker || speaker === 'interviewer') && isQuestion) {
-          console.log(`[Interviewer Question Detected]: "${detectedText}"`);
+        if (isInterviewQuestion(detectedText, speaker)) {
+          console.log(`[Interviewer Question Triggered AI Search]: "${detectedText}"`);
           if (handleAskQuestionRef.current) {
             handleAskQuestionRef.current(detectedText);
           }
         } else {
-          console.log(`[Applicant/Prose Speech Ignored for Question Trigger]: "${detectedText}"`);
+          console.log(`[Conversational Speech Filtered Out]: "${detectedText}"`);
         }
       }
     }
@@ -404,29 +429,30 @@ export default function App() {
                   <HelpCircle size={14} color="#10b981" /> Question Simulator
                 </h3>
 
-                <div style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
+                <form onSubmit={(e) => { e.preventDefault(); handleAskQuestion(); }} style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
                   <input
                     type="text"
                     className="glass-input"
                     style={{ flex: 1, padding: '8px 10px', fontSize: '0.85rem' }}
-                    placeholder="Type custom question..."
+                    placeholder="Type custom question (e.g., Explain HNSW vector indexing)..."
                     value={customQuestion}
                     onChange={(e) => setCustomQuestion(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleAskQuestion()}
                   />
-                  <button onClick={() => handleAskQuestion()} className="btn-primary" style={{ padding: '8px 12px' }}>
+                  <button type="submit" className="btn-primary" style={{ padding: '8px 14px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                     <Send size={14} />
+                    <span>Ask</span>
                   </button>
-                </div>
+                </form>
 
                 {/* Preset Samples */}
                 <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
                   {SAMPLE_QUESTIONS.map((q, idx) => (
                     <button
                       key={idx}
+                      type="button"
                       onClick={() => handleAskQuestion(q)}
                       className="btn-secondary"
-                      style={{ fontSize: '0.75rem', padding: '6px 10px', whiteSpace: 'nowrap', flexShrink: 0 }}
+                      style={{ fontSize: '0.75rem', padding: '6px 10px', whiteSpace: 'nowrap', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '4px' }}
                     >
                       <Play size={11} color="#10b981" />
                       <span>{q}</span>

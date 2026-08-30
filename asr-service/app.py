@@ -31,7 +31,8 @@ if not groq_key and os.path.exists("../backend-gateway/.env"):
     except Exception:
         pass
 
-vad = VoiceActivityDetector()
+interviewer_vad = VoiceActivityDetector()
+applicant_vad = VoiceActivityDetector()
 transcriber = ParakeetTranscriber(groq_api_key=groq_key)
 
 @app.get("/health")
@@ -74,15 +75,18 @@ async def websocket_transcribe(websocket: WebSocket):
                     chunk_bytes = raw_bytes
 
                 target_buffer = interviewer_buffer if channel == "interviewer" else applicant_buffer
+                target_vad = interviewer_vad if channel == "interviewer" else applicant_vad
 
                 # Always buffer incoming audio bytes to prevent audio loss
                 target_buffer.extend(chunk_bytes)
 
-                # Evaluate Voice Activity Detection (VAD)
-                has_speech = vad.is_speech(chunk_bytes)
+                # Evaluate Voice Activity Detection (VAD) independently per channel
+                has_speech = target_vad.is_speech(chunk_bytes)
                 
-                # Transcribe if buffer has reached ~0.5s of speech or upon utterance pause
-                if (has_speech and len(target_buffer) >= 16000) or (len(target_buffer) >= 6400 and vad.is_utterance_complete()):
+                # Transcribe upon utterance pause (silence detected) or when audio buffer reaches ~1.5 seconds (48,000 bytes)
+                should_transcribe = (target_vad.is_utterance_complete() and len(target_buffer) >= 6400) or (len(target_buffer) >= 48000)
+                
+                if should_transcribe:
                     res = transcriber.process_audio_buffer(bytes(target_buffer))
                     transcript_text, engine_used = res if isinstance(res, tuple) else (res, "whisper")
                     if transcript_text:
@@ -95,9 +99,10 @@ async def websocket_transcribe(websocket: WebSocket):
                             "is_final": True
                         })
                         target_buffer.clear()
-                    elif len(target_buffer) >= 32000:
+                        target_vad.reset()
+                    elif len(target_buffer) >= 160000: # ~5 seconds max buffer safety
                         target_buffer.clear()
-                    vad.reset()
+                        target_vad.reset()
             elif "text" in message and message["text"]:
                 try:
                     payload = json.loads(message["text"])
@@ -107,7 +112,8 @@ async def websocket_transcribe(websocket: WebSocket):
                     elif payload.get("type") == "reset_buffer":
                         interviewer_buffer.clear()
                         applicant_buffer.clear()
-                        vad.reset()
+                        interviewer_vad.reset()
+                        applicant_vad.reset()
                         logger.info("[ASR WS] ⚡ Audio buffers flushed & VAD reset. Ready for next question!")
                 except Exception:
                     pass
