@@ -1,6 +1,13 @@
 const { app, BrowserWindow, globalShortcut, ipcMain, screen, session, desktopCapturer } = require('electron');
 const path = require('path');
 
+// Disable GPU/HTTP disk cache conflicts and isolate session userData for clean launches
+app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+app.commandLine.appendSwitch('disable-http-cache');
+try {
+  app.setPath('userData', path.join(app.getPath('temp'), 'symbiot-electron-userData'));
+} catch (e) {}
+
 let mainWindow;
 
 function createWindow() {
