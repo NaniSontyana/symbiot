@@ -4,10 +4,11 @@ class VoiceActivityDetector:
     """
     Enhanced Voice Activity Detector (VAD) with adaptive energy thresholding and silence tracking
     """
-    def __init__(self, energy_threshold: float = 0.000005, silence_duration_frames: int = 6):
+    def __init__(self, energy_threshold: float = 0.00015, silence_duration_frames: int = 6):
         self.energy_threshold = energy_threshold
         self.silence_duration_frames = silence_duration_frames
         self.consecutive_silence = 0
+        self.has_speech_started = False
 
     def calculate_energy(self, audio_chunk: bytes) -> float:
         if not audio_chunk:
@@ -30,6 +31,7 @@ class VoiceActivityDetector:
         energy = self.calculate_energy(audio_chunk)
         if energy >= self.energy_threshold:
             self.consecutive_silence = 0
+            self.has_speech_started = True
             return True
         else:
             self.consecutive_silence += 1
@@ -37,12 +39,14 @@ class VoiceActivityDetector:
 
     def is_utterance_complete(self) -> bool:
         """
-        Returns True when consecutive silence frames indicate speech paused/completed
+        Returns True when consecutive silence frames indicate speech paused/completed after speech started
         """
-        return self.consecutive_silence >= self.silence_duration_frames
+        return self.has_speech_started and (self.consecutive_silence >= self.silence_duration_frames)
 
     def reset(self):
         """
-        Resets consecutive silence tracking counter
+        Resets consecutive silence tracking counter and speech state
         """
         self.consecutive_silence = 0
+        self.has_speech_started = False
+

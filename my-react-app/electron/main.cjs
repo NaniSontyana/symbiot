@@ -52,7 +52,7 @@ app.whenReady().then(() => {
     try {
       const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
       if (sources && sources.length > 0) {
-        callback({ video: sources[0], audio: 'loopback' });
+        callback({ video: sources[0], audio: request.audioRequested ? 'loopback' : undefined });
       } else {
         callback({});
       }

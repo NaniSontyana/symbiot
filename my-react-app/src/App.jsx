@@ -6,14 +6,82 @@ import CandidateContextModal from './components/CandidateContextModal';
 import DesktopScreenModal from './components/DesktopScreenModal';
 import FloatingPoint from './components/FloatingPoint';
 import { useAudioStreamer } from './hooks/useAudioStreamer';
-import { Send, Play, HelpCircle } from 'lucide-react';
+import { Send, Play, HelpCircle, RefreshCw, Sparkles } from 'lucide-react';
 
-const SAMPLE_QUESTIONS = [
-  "Tell me about a complex project where you handled real-time data streaming.",
-  "How do WebSockets differ from HTTP long-polling in terms of latency and server load?",
-  "What is the difference between SQL and NoSQL databases for high-scale applications?",
-  "Explain how pgvector and HNSW indexes work for AI document retrieval."
-];
+const SIMILAR_QUESTION_BANKS = {
+  react: [
+    "How does React reconciliation and virtual DOM diffing work under the hood?",
+    "When would you choose Zustand or Context API over Redux Toolkit?",
+    "How do you prevent unnecessary component re-renders in large React applications?",
+    "What is the practical difference between useMemo and useCallback hooks?"
+  ],
+  database: [
+    "How do HNSW and IVFFlat vector indexes differ for pgvector search?",
+    "How do you diagnose and optimize slow SQL queries using EXPLAIN ANALYZE?",
+    "What are the main trade-offs of database connection pooling with PgBouncer?",
+    "How do you ensure ACID transaction safety under high concurrency?"
+  ],
+  websocket: [
+    "How do WebSockets handle reconnection and heartbeat ping-pong under network drops?",
+    "What is the difference between WebSockets and Server-Sent Events (SSE)?",
+    "How do you scale WebSocket microservices horizontally behind a load balancer?",
+    "How do you handle channel authentication and security in WebSocket connections?"
+  ],
+  python: [
+    "How does FastAPI achieve asynchronous non-blocking performance with Python asyncio?",
+    "How do you manage background task queues and worker pools in FastAPI?",
+    "What is the difference between sync and async database drivers in Python?",
+    "How do you optimize memory consumption when processing large datasets in Python?"
+  ],
+  system_design: [
+    "How would you design a rate-limiting middleware for high-traffic REST APIs?",
+    "What strategies do you use for database partitioning and horizontal sharding?",
+    "How do you design a resilient caching layer using Redis to prevent cache stampedes?",
+    "What is the difference between monolithic and event-driven microservice architectures?"
+  ],
+  general: [
+    "Tell me about a complex project where you handled real-time data streaming.",
+    "How do WebSockets differ from HTTP long-polling in terms of latency and server load?",
+    "What is the difference between SQL and NoSQL databases for high-scale applications?",
+    "Explain how pgvector and HNSW indexes work for AI document retrieval."
+  ]
+};
+
+function getTopicSimilarQuestions(activeQ = '', context = '') {
+  const combined = (activeQ + ' ' + context).toLowerCase();
+
+  const tailoredQuestions = [];
+
+  // Match candidate resume & JD skills dynamically
+  if (/react|jsx|component|state|frontend/i.test(combined)) {
+    tailoredQuestions.push(...SIMILAR_QUESTION_BANKS.react);
+  }
+  if (/postgres|sql|database|vector|pgvector|hsnw|db/i.test(combined)) {
+    tailoredQuestions.push(...SIMILAR_QUESTION_BANKS.database);
+  }
+  if (/websocket|socket|real-time|realtime|stream|audio/i.test(combined)) {
+    tailoredQuestions.push(...SIMILAR_QUESTION_BANKS.websocket);
+  }
+  if (/python|fastapi|django|flask|backend|asr/i.test(combined)) {
+    tailoredQuestions.push(...SIMILAR_QUESTION_BANKS.python);
+  }
+  if (/design|system|architecture|microservice|distributed/i.test(combined)) {
+    tailoredQuestions.push(...SIMILAR_QUESTION_BANKS.system_design);
+  }
+
+  // Deduplicate and ensure 4 questions are available
+  const uniqueQuestions = Array.from(new Set(tailoredQuestions));
+
+  if (uniqueQuestions.length < 4) {
+    for (const gq of SIMILAR_QUESTION_BANKS.general) {
+      if (!uniqueQuestions.includes(gq)) {
+        uniqueQuestions.push(gq);
+      }
+    }
+  }
+
+  return uniqueQuestions.slice(0, 4);
+}
 
 export default function App() {
   const [isConnected, setIsConnected] = useState(false);
@@ -92,6 +160,19 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [latencyMs, setLatencyMs] = useState(180);
   const [conversationHistory, setConversationHistory] = useState([]);
+  const [similarQuestions, setSimilarQuestions] = useState(SIMILAR_QUESTION_BANKS.general);
+
+  // Automatically update similar question recommendations when active question or context changes
+  useEffect(() => {
+    const updated = getTopicSimilarQuestions(activeQuestion, candidateContext);
+    setSimilarQuestions(updated);
+  }, [activeQuestion, candidateContext]);
+
+  const handleRefreshSimilarQuestions = () => {
+    const categories = Object.keys(SIMILAR_QUESTION_BANKS);
+    const randomCategory = categories[Math.floor(Math.random() * categories.length)];
+    setSimilarQuestions(SIMILAR_QUESTION_BANKS[randomCategory]);
+  };
 
   const socketRef = useRef(null);
 
@@ -153,65 +234,11 @@ export default function App() {
       selectedModel: selectedModel || 'gemini-1.5-flash',
     });
 
-    const sendPayload = (ws) => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(payload);
-        console.log(`[Question Simulator] Sent question: "${query}"`);
-      }
-    };
-
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      sendPayload(socketRef.current);
+      socketRef.current.send(payload);
+      console.log(`[Copilot WS] Sent question to Gateway: "${query}"`);
     } else {
-      console.warn('[Copilot WS] Gateway WebSocket reconnecting on port 5000...');
-      const newWs = new WebSocket('ws://localhost:5000/ws/copilot');
-      socketRef.current = newWs;
-
-      newWs.onopen = () => {
-        setIsConnected(true);
-        sendPayload(newWs);
-      };
-
-      newWs.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === 'start_generating') {
-            setIsGenerating(true);
-            setResponseText('');
-          } else if (data.type === 'token_delta') {
-            setResponseText((prev) => prev + data.token);
-            setConversationHistory((prev) => {
-              if (prev.length === 0) return prev;
-              const updated = [...prev];
-              const lastIdx = updated.length - 1;
-              updated[lastIdx] = {
-                ...updated[lastIdx],
-                answer: updated[lastIdx].answer + data.token,
-                isGenerating: true
-              };
-              return updated;
-            });
-          } else if (data.type === 'end_generating') {
-            setIsGenerating(false);
-            setConversationHistory((prev) => {
-              if (prev.length === 0) return prev;
-              const updated = [...prev];
-              const lastIdx = updated.length - 1;
-              updated[lastIdx] = {
-                ...updated[lastIdx],
-                isGenerating: false
-              };
-              return updated;
-            });
-
-            // Automatically switch to Applicant Speech Mode so candidate can read/speak response to interviewer
-            if (switchSpeakerRef.current) {
-              console.log('[Turn Protocol] AI answer complete. Switching to Applicant Response Phase...');
-              switchSpeakerRef.current('applicant');
-            }
-          }
-        } catch (e) {}
-      };
+      console.warn('[Copilot WS] WebSocket on port 5000 not connected yet');
     }
 
     setCustomQuestion('');
@@ -238,54 +265,115 @@ export default function App() {
     ];
     if (hallucinations.some(h => lower.includes(h))) return false;
 
-    // 3. Minimum length check (must be at least 14 chars and 3 words)
-    const words = lower.split(/\s+/).filter(Boolean);
-    if (cleanText.length < 14 || words.length < 3) return false;
+    const normalized = lower.replace(/[^a-z0-9\s]/g, ' ').trim();
+    const words = normalized.split(/\s+/).filter(Boolean);
 
-    // 4. Exclude casual filler phrases & pleasantries
-    const fillerPhrases = [
-      'thank you', 'thanks', 'can you hear me', 'am i audible', 'hello', 'hi there',
-      'good morning', 'good afternoon', 'good evening', 'okay cool', 'sounds good',
-      'makes sense', 'see you', 'bye for now', 'yes i can', 'no problem', 'right right',
-      'this is better', 'yeah this', 'let me show', 'as i can say'
-    ];
-    if (fillerPhrases.some(phrase => lower.includes(phrase))) return false;
+    if (words.length < 2) return false;
 
-    // 5. Exclude explanatory statement prefixes (statements using "what/how/why" in prose)
-    const statementPrefixes = [
-      'so what we', 'this is how', 'that is why', 'here is what', 'what we are doing',
-      'i think that', 'we are going to', 'as you can see', 'let me explain', 'in this case',
-      'for example', 'first of all', 'remember we have'
-    ];
-    if (statementPrefixes.some(prefix => lower.startsWith(prefix))) return false;
+    // 3. Filter out pure pleasantries / acknowledgments / greetings / location chatter
+    const fillerWords = new Set([
+      'thank', 'thanks', 'you', 'very', 'much', 'so', 'ok', 'okay', 'great',
+      'good', 'job', 'awesome', 'perfect', 'cool', 'got', 'it', 'ah', 'aha',
+      'yeah', 'yes', 'sure', 'right', 'alright', 'fine', 'nice', 'sounds',
+      'makes', 'sense', 'bye', 'hello', 'hi', 'hey', 'there', 'doing', 'back',
+      'well', 'noida', 'delhi', 'bangalore', 'mumbai', 'location', 'city'
+    ]);
 
-    // 6. Must have an explicit question mark OR a question-starter phrase in the first 3 words
+    const isAllFiller = words.every(w => fillerWords.has(w));
+    if (isAllFiller) return false;
+
+    // 4. Must contain an explicit question mark OR a clear question/interview prompt trigger
     const hasQuestionMark = cleanText.includes('?');
 
-    const questionStarters = [
+    const questionTriggers = [
       'what', 'how', 'why', 'where', 'when', 'which', 'who', 'whose', 'whom',
-      'can you', 'could you', 'would you', 'explain', 'tell me', 'describe',
-      'difference', 'compare', 'walk me through', 'design', 'implement',
-      'optimize', 'architecture', 'have you', 'in your opinion'
+      'can you', 'could you', 'would you', 'will you', 'do you', 'did you',
+      'have you', 'are you', 'is there', 'tell me', 'explain', 'describe',
+      'walk me through', 'elaborate', 'discuss', 'difference', 'compare',
+      'pros and cons', 'trade off', 'tradeoff', 'design', 'implement', 'build',
+      'architecture', 'optimize', 'scale', 'experience', 'opinion', 'perspective',
+      'thoughts'
     ];
 
-    const firstThreeWords = words.slice(0, 3).join(' ');
-    const startsWithQuestionTrigger = questionStarters.some(trigger =>
-      firstThreeWords.includes(trigger) || lower.startsWith(trigger)
-    );
+    const hasQuestionTrigger = questionTriggers.some(trigger => lower.includes(trigger));
 
-    // Reject dangling/incomplete trailing prepositions ("Can you explain about", "How do you handle in")
+    // Reject incomplete trailing/transitional phrases without a question mark
     const trailingConnectors = [
-      'about', 'with', 'in', 'of', 'for', 'and', 'or', 'the', 'a', 'an', 'to', 'is', 'are',
-      'by', 'on', 'what', 'how', 'why', 'where', 'when', 'can you', 'could you', 'would you',
-      'like', 'such as', 'that', 'this', 'if', 'when', 'which', 'who'
+      'and then', 'and now', 'so we', 'let us', 'going to', 'ahead and', 'we are', 'see'
     ];
-    const lastWord = words[words.length - 1];
-    const isDanglingIncomplete = trailingConnectors.includes(lastWord) && !hasQuestionMark;
+    const endsWithTrailing = trailingConnectors.some(c => lower.endsWith(c));
 
-    if (isDanglingIncomplete) return false;
+    if (!hasQuestionMark && endsWithTrailing) {
+      return false;
+    }
 
-    return hasQuestionMark || startsWithQuestionTrigger;
+    // Require either a question mark OR a question trigger to dispatch to AI
+    return hasQuestionMark || hasQuestionTrigger;
+  };
+
+  // Strip unnecessary filler words ("thank you", "good job", "hello", "thanks", "nice job", etc.)
+  const cleanUnnecessaryWords = (text) => {
+    if (!text || typeof text !== 'string') return '';
+
+    let cleaned = text;
+
+    const unnecessaryPhrases = [
+      /thank\s+you(?:\s+very\s+much)?/gi,
+      /thanks(?:\s+a\s+lot)?/gi,
+      /good\s+job/gi,
+      /great\s+job/gi,
+      /nice\s+job/gi,
+      /good\s+morning/gi,
+      /good\s+afternoon/gi,
+      /good\s+evening/gi,
+      /have\s+a\s+nice\s+day/gi,
+      /\b(?:hello|hi|hey|bye|goodbye|thanks|thankyou|thx|cheers|noida|delhi|mumbai|city|location)\b/gi,
+      /\b(?:okay|ok)\s+(?:cool|awesome|great|perfect|thanks|thank\s+you)\b/gi
+    ];
+
+    for (const phraseRegex of unnecessaryPhrases) {
+      cleaned = cleaned.replace(phraseRegex, ' ');
+    }
+
+    return cleaned
+      .replace(/[,\s]+/g, ' ')
+      .replace(/\s+([?.!])/g, '$1')
+      .trim();
+  };
+
+  // Sanitize and strip repetitive leading/trailing pleasantry noise ("Thank you", "Thanks")
+  const sanitizeQuestionText = (rawText) => {
+    if (!rawText || typeof rawText !== 'string') return '';
+
+    let text = cleanUnnecessaryWords(rawText);
+    if (!text) return '';
+
+    // 1. Strip leading pleasantries/fillers
+    const leadingFillersPattern = /^(?:thank\s+you|thanks|thank|ok|okay|hi|hello|hey|good\s+job|great|awesome|perfect|ah|aha|yeah|yes|sure|right|alright|fine|nice|so|and|then|noida|delhi|mumbai|city|location|bye)[.,!\s]*/gi;
+    let prevLen = 0;
+    while (text.length !== prevLen) {
+      prevLen = text.length;
+      text = text.replace(leadingFillersPattern, '').trim();
+    }
+
+    // 2. Strip trailing pleasantries/fillers
+    const trailingFillersPattern = /[.,!\s]*(?:thank\s+you(?:\s+very\s+much)?|thanks|thank|ok|okay|bye|good\s+job|great|awesome|perfect|ah|aha|yeah|yes|sure|right|alright|fine|nice|noida|delhi|mumbai|city|location)[.,!\s]*$/gi;
+    prevLen = 0;
+    while (text.length !== prevLen) {
+      prevLen = text.length;
+      text = text.replace(trailingFillersPattern, '').trim();
+    }
+
+    // 3. Remove repeated identical consecutive sentences/phrases
+    const sentences = text.split(/(?<=[?.!])\s+/).filter(Boolean);
+    const uniqueSentences = [];
+    for (const s of sentences) {
+      if (uniqueSentences.length === 0 || uniqueSentences[uniqueSentences.length - 1].toLowerCase() !== s.toLowerCase()) {
+        uniqueSentences.push(s);
+      }
+    }
+
+    return uniqueSentences.join(' ').trim() || text;
   };
 
   // Smart Speech Accumulator for ASR chunks
@@ -294,17 +382,41 @@ export default function App() {
 
   const dispatchAccumulatedQuestion = (text) => {
     if (!text || !text.trim()) return;
-    const finalQ = text.trim();
+    const sanitized = sanitizeQuestionText(text);
+    if (!sanitized || !sanitized.trim()) return;
 
-    // Final structural validation before sending complete question to LLM
-    if (!isInterviewQuestion(finalQ, 'interviewer')) {
-      console.log(`[ASR Accumulator] Incomplete question speech dropped: "${finalQ}"`);
+    // Check dangling prepositions/connectors before dispatching
+    const lower = sanitized.toLowerCase().trim();
+    const words = lower.split(/\s+/).filter(Boolean);
+    const hasQuestionMark = sanitized.includes('?');
+
+    const danglingConnectors = [
+      'and', 'or', 'with', 'for', 'in', 'of', 'to', 'about', 'like', 'such as',
+      'between', 'versus', 'compared to', 'using', 'when', 'if', 'how', 'what',
+      'why', 'where', 'which', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+      'the', 'a', 'an', 'and then', 'and now', 'so we', 'let us', 'going to',
+      'ahead and', 'we are'
+    ];
+
+    const lastWord = words[words.length - 1] || '';
+    const lastTwoWords = words.slice(-2).join(' ') || '';
+
+    const isDanglingIncomplete = !hasQuestionMark && (danglingConnectors.includes(lastWord) || danglingConnectors.includes(lastTwoWords));
+
+    if (isDanglingIncomplete) {
+      console.log(`[ASR Accumulator] Sentence is dangling/incomplete ("${sanitized}"). Waiting for interviewer to complete question...`);
       return;
     }
 
-    console.log(`[Copilot AI Dispatching 100% Complete Question]: "${finalQ}"`);
+    // Final structural validation before sending complete question to LLM
+    if (!isInterviewQuestion(sanitized, 'interviewer')) {
+      console.log(`[ASR Accumulator] Incomplete question speech dropped: "${sanitized}"`);
+      return;
+    }
+
+    console.log(`[Copilot AI Dispatching 100% Complete Question]: "${sanitized}"`);
     if (handleAskQuestionRef.current) {
-      handleAskQuestionRef.current(finalQ);
+      handleAskQuestionRef.current(sanitized);
     }
     pendingQuestionRef.current = '';
   };
@@ -340,16 +452,19 @@ export default function App() {
           return;
         }
 
-        // Accumulate incoming text chunks continuously while interviewer speaks
-        const combined = (pendingQuestionRef.current + ' ' + detectedText).trim();
+        // Clean all unnecessary filler words ("thank you", "good job", "thanks", etc.) BEFORE recording into buffer
+        const cleanChunk = cleanUnnecessaryWords(detectedText);
+        if (!cleanChunk) return;
+
+        const combined = (pendingQuestionRef.current + ' ' + cleanChunk).trim();
         pendingQuestionRef.current = combined;
 
         if (accumulationTimerRef.current) clearTimeout(accumulationTimerRef.current);
 
-        // Require a 1400ms (1.4s) natural silence pause after speech before dispatching to LLM
+        // Require a 2400ms (2.4s) complete silence pause after speech before dispatching complete question
         accumulationTimerRef.current = setTimeout(() => {
           dispatchAccumulatedQuestion(pendingQuestionRef.current);
-        }, 1400);
+        }, 2400);
       }
     }
   );
@@ -452,6 +567,10 @@ export default function App() {
                 return updated;
               });
               if (resetAsrBufferRef.current) resetAsrBufferRef.current();
+              if (switchSpeakerRef.current) {
+                console.log('[Turn Protocol] AI answer streaming complete. Switching to Applicant Response Phase...');
+                switchSpeakerRef.current('applicant');
+              }
             }
           } catch (err) {
             console.error('[Copilot WS] Parse error:', err);
@@ -589,11 +708,23 @@ export default function App() {
 
             {!stealthMode && (
               <div className="glass-panel" style={{ padding: '14px' }}>
-                <h3 style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <HelpCircle size={14} color="#ffffff" /> Question Simulator
-                </h3>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                  <h3 style={{ fontSize: '0.85rem', fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <HelpCircle size={14} color="#ffffff" /> Question Simulator
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={handleRefreshSimilarQuestions}
+                    className="btn-secondary"
+                    style={{ fontSize: '0.72rem', padding: '3px 8px', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}
+                    title="Generate new similar follow-up questions"
+                  >
+                    <RefreshCw size={11} color="#ffffff" />
+                    <span>Generate Similar</span>
+                  </button>
+                </div>
 
-                <form onSubmit={(e) => { e.preventDefault(); handleAskQuestion(); }} style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
+                <form onSubmit={(e) => { e.preventDefault(); handleAskQuestion(); }} style={{ display: 'flex', gap: '6px', marginBottom: '12px' }}>
                   <input
                     type="text"
                     className="glass-input"
@@ -608,20 +739,26 @@ export default function App() {
                   </button>
                 </form>
 
-                {/* Preset Samples */}
-                <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
-                  {SAMPLE_QUESTIONS.map((q, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      onClick={() => handleAskQuestion(q)}
-                      className="btn-secondary"
-                      style={{ fontSize: '0.75rem', padding: '6px 10px', whiteSpace: 'nowrap', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '4px' }}
-                    >
-                      <Play size={11} color="#ffffff" />
-                      <span>{q}</span>
-                    </button>
-                  ))}
+                {/* Similar / Related Questions Chips */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <span style={{ fontSize: '0.7rem', color: '#a3a3a3', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <Sparkles size={11} color="#eab308" />
+                    {activeQuestion ? 'Suggested Similar Follow-up Questions:' : 'Practice Interview Questions:'}
+                  </span>
+                  <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
+                    {similarQuestions.map((q, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => handleAskQuestion(q)}
+                        className="btn-secondary"
+                        style={{ fontSize: '0.75rem', padding: '6px 10px', whiteSpace: 'nowrap', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}
+                      >
+                        <Play size={11} color="#ffffff" />
+                        <span>{q}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}

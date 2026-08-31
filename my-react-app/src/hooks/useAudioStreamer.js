@@ -123,6 +123,71 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     };
   }, [connectAsrSocket]);
 
+  const isStreamingRef = useRef(false);
+  useEffect(() => {
+    isStreamingRef.current = isStreaming;
+  }, [isStreaming]);
+
+  // Start Web Speech API as instant client-side fallback (Web browsers only)
+  const startWebSpeechRecognition = useCallback(() => {
+    // Electron apps do not have built-in Google Speech API keys in Chromium network stack.
+    // Skip Web Speech API in Electron to prevent repeated ChunkedDataPipeUploadDataStream network errors.
+    const isElectron = typeof window !== 'undefined' && (!!window.electronAPI || (navigator.userAgent && navigator.userAgent.includes('Electron')));
+    if (isElectron) {
+      console.log('[Web Speech API] Skipped in Electron environment (ASR handled via Python microservice)');
+      return;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    try {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch (e) {}
+      }
+
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = (event) => {
+        let finalTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const chunk = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += chunk + ' ';
+          }
+        }
+        const trimmed = finalTranscript.trim();
+        if (trimmed) {
+          setLiveTranscript(trimmed);
+          if (onTranscriptRef.current) {
+            onTranscriptRef.current(trimmed, activeSpeakerRef.current, 'web-speech-api');
+          }
+        }
+      };
+
+      recognition.onerror = (e) => {
+        if (e.error !== 'no-speech' && e.error !== 'aborted') {
+          console.warn('[Web Speech API] Error:', e.error);
+        }
+      };
+
+      recognition.onend = () => {
+        if (isStreamingRef.current) {
+          try { recognition.start(); } catch (err) {}
+        }
+      };
+
+      recognition.start();
+      recognitionRef.current = recognition;
+      console.log('[Web Speech API] Client-side STT initialized successfully');
+    } catch (e) {
+      console.warn('[Web Speech API] Could not initialize:', e);
+    }
+  }, []);
+
   // Start real-time audio streaming from user microphone
   const startStreaming = async () => {
     setMicError(null);
@@ -163,6 +228,9 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
         processorRef.current = workletNode;
 
         workletNode.port.onmessage = (event) => {
+          if (audioCtx.state === 'suspended') {
+            audioCtx.resume().catch(() => {});
+          }
           if (event.data.type === 'pcm_data') {
             setAudioLevel(event.data.audioLevel);
 
@@ -189,6 +257,9 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
         processorRef.current = processor;
 
         processor.onaudioprocess = (e) => {
+          if (audioCtx.state === 'suspended') {
+            audioCtx.resume().catch(() => {});
+          }
           const inputData = e.inputBuffer.getChannelData(0);
 
           let sum = 0;
@@ -218,7 +289,8 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
       }
 
       setIsStreaming(true);
-      console.log('[ASR Streamer] Live mic streaming active (16kHz PCM Groq Whisper ASR)');
+      startWebSpeechRecognition();
+      console.log('[ASR Streamer] Live mic streaming active (16kHz PCM Groq Whisper ASR + Browser Web Speech Fallback)');
     } catch (err) {
       console.error('[ASR Streamer] Microphone access error:', err);
       setMicError(err.name === 'NotAllowedError' ? 'Microphone permission denied.' : err.message);

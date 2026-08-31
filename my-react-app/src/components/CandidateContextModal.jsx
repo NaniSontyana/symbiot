@@ -35,7 +35,7 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
     }
 
     try {
-      const response = await fetch('http://localhost:8080/api/documents/upload-file', {
+      const response = await fetch('http://localhost:5000/api/documents/upload-file', {
         method: 'POST',
         body: formData,
       });
@@ -90,7 +90,7 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
     // Save text-format Job Description to vector backend
     if (jobDescriptionText) {
       try {
-        await fetch('http://localhost:8080/api/documents/upload-text', {
+        await fetch('http://localhost:5000/api/documents/upload-text', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -207,17 +207,32 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
         </div>
 
         {/* 2. JOB DESCRIPTION INTAKE (TEXT FORMAT) */}
-        <div style={{ marginBottom: '20px' }}>
+        <div style={{ marginBottom: '18px' }}>
           <label style={{ fontSize: '0.82rem', fontWeight: 700, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
             <Briefcase size={14} color="#ffffff" /> 2. Job Description Intake (Text Format: Copy-Paste)
           </label>
           <textarea
             className="glass-input"
-            rows={4}
+            rows={3}
             style={{ width: '100%', resize: 'vertical', fontFamily: 'Inter, sans-serif', fontSize: '0.85rem', lineHeight: 1.5 }}
             placeholder="Paste Job Description (JD) text directly here..."
             value={jobDescriptionText}
             onChange={(e) => setJobDescriptionText(e.target.value)}
+          />
+        </div>
+
+        {/* 3. RESUME TEXT / KEY SKILLS INTAKE (TEXT FORMAT) */}
+        <div style={{ marginBottom: '20px' }}>
+          <label style={{ fontSize: '0.82rem', fontWeight: 700, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+            <Sparkles size={14} color="#eab308" /> 3. Candidate Resume Text & Key Skills (Text Format: Copy-Paste)
+          </label>
+          <textarea
+            className="glass-input"
+            rows={3}
+            style={{ width: '100%', resize: 'vertical', fontFamily: 'Inter, sans-serif', fontSize: '0.85rem', lineHeight: 1.5 }}
+            placeholder="Paste your top resume skills, key projects, technologies (e.g., React, Node.js, Python, PostgreSQL, WebSockets)..."
+            value={resumeText}
+            onChange={(e) => setResumeText(e.target.value)}
           />
         </div>
 

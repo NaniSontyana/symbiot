@@ -143,7 +143,10 @@ class ParakeetTranscriber:
                 return transcript
         except Exception as err:
             err_str = str(err)
-            if "429" in err_str:
+            if "403" in err_str or "401" in err_str:
+                logger.error(f"[Groq Cloud STT] Invalid or expired Groq API key ({err_str}). Disabling Groq Cloud STT and switching to local faster-whisper.")
+                self.groq_api_key = None
+            elif "429" in err_str:
                 self.groq_cooldown_until = time.time() + 6.0
                 logger.warning(f"[Groq Cloud STT] Rate limit (HTTP 429). Cooldown 6s activated, using local fallback.")
             else:
@@ -154,6 +157,18 @@ class ParakeetTranscriber:
         if not text:
             return ""
         lower = text.lower().strip()
+        lower_clean = lower.strip(" .!?,;")
+
+        # Standalone silence hallucinations
+        standalone_hallucinations = {
+            'thank you', 'you', 'thanks', 'thank you for watching', 'thanks for watching',
+            'thank you very much', 'subtitles by amara.org', 'bye', 'goodbye', 'hello',
+            'thank you.', 'you.'
+        }
+        if lower_clean in standalone_hallucinations:
+            logger.info(f"[ASR Cleaner] Dropped standalone silence hallucination: '{text}'")
+            return ""
+
         hallucinations = [
           'sous-titrage', 'radio-canada', 'amara.org', 'subtitles by', 'thank you for watching',
           'subscribe to', 'pog.org', 'pyscript', 'psyche', 'shizuk', 'particip', 'mbc',
@@ -169,6 +184,15 @@ class ParakeetTranscriber:
         Processes streaming audio Int16 PCM buffer into (transcript_text, engine_name)
         """
         if not audio_bytes or len(audio_bytes) < 3200:
+            return "", "none"
+
+        # Energy Pre-Filter: Calculate RMS amplitude of audio buffer to reject low-volume background noise
+        aligned_len = len(audio_bytes) - (len(audio_bytes) % 2)
+        samples = np.frombuffer(audio_bytes[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0
+        rms_energy = np.sqrt(np.mean(samples ** 2)) if len(samples) > 0 else 0.0
+
+        if rms_energy < 0.008:
+            # Audio is below voice threshold (ambient noise floor)
             return "", "none"
 
         # 1. Try Groq Cloud Whisper (<90ms ultra-low latency)
@@ -187,8 +211,7 @@ class ParakeetTranscriber:
                     audio_np,
                     beam_size=1,
                     language="en",
-                    vad_filter=True,
-                    vad_parameters=dict(min_silence_duration_ms=250)
+                    vad_filter=True
                 )
                 text = " ".join([segment.text for segment in segments]).strip()
                 clean_text = self.clean_hallucination(text)
