@@ -311,22 +311,32 @@ export default function App() {
     return hasQuestionMark || hasQuestionTrigger;
   };
 
-  // Strip unnecessary filler words ("thank you", "good job", "hello", "thanks", "nice job", etc.)
+  // Strip unnecessary filler words ("thank you", "good job", "hello", "thanks", "see you soon", etc.)
   const cleanUnnecessaryWords = (text) => {
     if (!text || typeof text !== 'string') return '';
 
-    let cleaned = text;
+    let cleaned = text.trim();
+    // Strip leading dots, symbols, or non-alphanumeric noise at start of string
+    cleaned = cleaned.replace(/^[^a-zA-Z0-9]+/, '').trim();
 
     const unnecessaryPhrases = [
-      /thank\s+you(?:\s+very\s+much)?/gi,
-      /thanks(?:\s+a\s+lot)?/gi,
+      /see\s+you(?:\s+soon|\s+later)?/gi,
+      /see\s+ya/gi,
+      /talk\s+to\s+you\s+later/gi,
+      /catch\s+you\s+later/gi,
+      /take\s+care/gi,
+      /have\s+a\s+(?:good|great|nice)\s+(?:day|evening|night|time)/gi,
+      /thank\s+you(?:\s+very\s+much|\s+so\s+much|\s+again)?/gi,
+      /thanks(?:\s+a\s+lot|\s+again)?/gi,
       /good\s+job/gi,
       /great\s+job/gi,
       /nice\s+job/gi,
       /good\s+morning/gi,
       /good\s+afternoon/gi,
       /good\s+evening/gi,
-      /have\s+a\s+nice\s+day/gi,
+      /good\s+night/gi,
+      /nice\s+(?:to\s+meet\s+you|meeting\s+you)/gi,
+      /glad\s+(?:to\s+meet\s+you|meeting\s+you)/gi,
       /\b(?:hello|hi|hey|bye|goodbye|thanks|thankyou|thx|cheers|noida|delhi|mumbai|city|location)\b/gi,
       /\b(?:okay|ok)\s+(?:cool|awesome|great|perfect|thanks|thank\s+you)\b/gi
     ];
@@ -338,10 +348,11 @@ export default function App() {
     return cleaned
       .replace(/[,\s]+/g, ' ')
       .replace(/\s+([?.!])/g, '$1')
+      .replace(/^[^a-zA-Z0-9]+/, '')
       .trim();
   };
 
-  // Sanitize and strip repetitive leading/trailing pleasantry noise ("Thank you", "Thanks")
+  // Sanitize, deduplicate n-grams/phrases, and strip repetitive noise
   const sanitizeQuestionText = (rawText) => {
     if (!rawText || typeof rawText !== 'string') return '';
 
@@ -357,23 +368,38 @@ export default function App() {
     }
 
     // 2. Strip trailing pleasantries/fillers
-    const trailingFillersPattern = /[.,!\s]*(?:thank\s+you(?:\s+very\s+much)?|thanks|thank|ok|okay|bye|good\s+job|great|awesome|perfect|ah|aha|yeah|yes|sure|right|alright|fine|nice|noida|delhi|mumbai|city|location)[.,!\s]*$/gi;
+    const trailingFillersPattern = /[.,!\s]*(?:thank\s+you(?:\s+very\s+much)?|thanks|thank|ok|okay|bye|good\s+job|great|awesome|perfect|ah|aha|yeah|yes|sure|right|alright|fine|nice|noida|delhi|mumbai|city|location|see\s+you|see\s+you\s+soon|see\s+ya)[.,!\s]*$/gi;
     prevLen = 0;
     while (text.length !== prevLen) {
       prevLen = text.length;
       text = text.replace(trailingFillersPattern, '').trim();
     }
 
-    // 3. Remove repeated identical consecutive sentences/phrases
+    // 3. Deduplicate repeated consecutive words/phrases (1 to 5 words long, e.g. "What is What is CSS?" -> "What is CSS?")
+    let prevText = '';
+    while (text !== prevText) {
+      prevText = text;
+      text = text.replace(/\b(\w+(?:\s+\w+){0,4})([?.,!\s]+)\1\b/gi, '$1$2');
+    }
+
+    // 4. Remove repeated identical consecutive sentences
     const sentences = text.split(/(?<=[?.!])\s+/).filter(Boolean);
     const uniqueSentences = [];
     for (const s of sentences) {
-      if (uniqueSentences.length === 0 || uniqueSentences[uniqueSentences.length - 1].toLowerCase() !== s.toLowerCase()) {
-        uniqueSentences.push(s);
+      const cleanS = s.trim();
+      if (uniqueSentences.length === 0 || uniqueSentences[uniqueSentences.length - 1].toLowerCase() !== cleanS.toLowerCase()) {
+        uniqueSentences.push(cleanS);
       }
     }
 
-    return uniqueSentences.join(' ').trim() || text;
+    text = uniqueSentences.join(' ').trim() || text;
+    text = text.replace(/^[^a-zA-Z0-9]+/, '').trim();
+
+    if (text.length > 0) {
+      text = text.charAt(0).toUpperCase() + text.slice(1);
+    }
+
+    return text;
   };
 
   // Smart Speech Accumulator for ASR chunks

@@ -83,8 +83,8 @@ async def websocket_transcribe(websocket: WebSocket):
                 # Evaluate Voice Activity Detection (VAD) independently per channel
                 has_speech = target_vad.is_speech(chunk_bytes)
                 
-                # Transcribe upon utterance pause (silence detected >= 0.3s buffer) or max speech buffer ~2.0 seconds (64,000 bytes)
-                should_transcribe = target_vad.has_speech_started and ((target_vad.is_utterance_complete() and len(target_buffer) >= 9600) or (len(target_buffer) >= 64000))
+                # Transcribe upon utterance pause (silence detected >= 0.25s) or max buffer (~1.0s / 32,000 bytes)
+                should_transcribe = (target_vad.is_utterance_complete() and len(target_buffer) >= 6400) or (len(target_buffer) >= 32000)
                 
                 if should_transcribe:
                     res = transcriber.process_audio_buffer(bytes(target_buffer))
@@ -104,14 +104,9 @@ async def websocket_transcribe(websocket: WebSocket):
                         target_buffer.clear()
                         target_vad.reset()
                     else:
-                        # Clear buffer after transcription attempt to prevent buffer stagnation
-                        if len(target_buffer) >= 32000 or target_vad.is_utterance_complete():
-                            target_buffer.clear()
-                            target_vad.reset()
-                else:
-                    # Clear silent background noise buffer if no speech has started and buffer exceeds limit
-                    if not target_vad.has_speech_started and len(target_buffer) >= 32000:
+                        # Clear buffer if audio was silence or empty hallucination
                         target_buffer.clear()
+                        target_vad.reset()
             elif "text" in message and message["text"]:
                 try:
                     payload = json.loads(message["text"])

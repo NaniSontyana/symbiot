@@ -45,8 +45,12 @@ CRITICAL LIVE INTERVIEW TELEPROMPTER RULES:
    - Sentence 3: Key trade-off, optimization, or engineering insight.
    - Sentence 4: Clean, confident concluding sentence.
 
-CANDIDATE BACKGROUND & RESUME CONTEXT:
+QUESTION NORMALIZATION & CANDIDATE CONTEXT (RESUME & JOB DESCRIPTION):
 ${userContext || 'Full-Stack Engineer experienced in Node.js, Python, PostgreSQL, WebSockets, and React.'}
+
+CRITICAL EXECUTION GUIDELINES:
+- Normalize the interviewer's question against the candidate's exact background (skills, frameworks, experience level from resume) and the job role requirements (from Job Description).
+- FALLBACK LOGIC: If specific resume keywords or job description matches are NOT found for the question, answer the question authoritatively on your own based on best-practice software engineering expertise. Do NOT express uncertainty or mention missing resume data.
 `;
 
   // Tier 1: Try Groq Cloud LLM (Ultra Fast <180ms streaming via openai/gpt-oss-120b)

@@ -186,26 +186,27 @@ class ParakeetTranscriber:
         if not audio_bytes or len(audio_bytes) < 3200:
             return "", "none"
 
-        # Energy Pre-Filter: Calculate RMS amplitude of audio buffer to reject low-volume background noise
-        aligned_len = len(audio_bytes) - (len(audio_bytes) % 2)
-        samples = np.frombuffer(audio_bytes[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0
+        # 1. Normalize audio volume to boost soft microphone inputs
+        norm_bytes = normalize_audio(audio_bytes)
+
+        # 2. Digital Zero Filter: Only drop zero/near-zero audio buffers (< 0.00005 RMS)
+        aligned_len = len(norm_bytes) - (len(norm_bytes) % 2)
+        samples = np.frombuffer(norm_bytes[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0
         rms_energy = np.sqrt(np.mean(samples ** 2)) if len(samples) > 0 else 0.0
 
-        if rms_energy < 0.008:
-            # Audio is below voice threshold (ambient noise floor)
+        if rms_energy < 0.00005:
             return "", "none"
 
-        # 1. Try Groq Cloud Whisper (<90ms ultra-low latency)
+        # 3. Try Groq Cloud Whisper (<90ms ultra-low latency)
         if self.groq_api_key:
-            groq_text = self.transcribe_groq_cloud(audio_bytes)
+            groq_text = self.transcribe_groq_cloud(norm_bytes)
             clean_text = self.clean_hallucination(groq_text)
             if clean_text:
                 return clean_text, "groq-whisper-v3-turbo"
 
-        # 2. Local Faster-Whisper Fallback
+        # 4. Local Faster-Whisper Fallback
         if self.use_faster_whisper and self.model:
             try:
-                norm_bytes = normalize_audio(audio_bytes)
                 audio_np = np.frombuffer(norm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
                 segments, _ = self.model.transcribe(
                     audio_np,

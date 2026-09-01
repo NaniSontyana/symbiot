@@ -35,27 +35,38 @@ export function setupCopilotWebSocket(server) {
             return;
           }
 
-          // Strip unnecessary filler words ("thank you", "good job", "hello", "thanks", etc.)
+          // 1. Strip leading non-alphanumeric noise (. , - ... etc.)
+          let cleanQ = questionText.trim().replace(/^[^a-zA-Z0-9]+/, '').trim();
+
+          // 2. Strip unnecessary filler words & farewell pleasantries ("thank you", "see you soon", "good job", etc.)
           const unnecessaryPhrases = [
-            /thank\s+you(?:\s+very\s+much)?/gi,
-            /thanks(?:\s+a\s+lot)?/gi,
+            /see\s+you(?:\s+soon|\s+later)?/gi,
+            /see\s+ya/gi,
+            /talk\s+to\s+you\s+later/gi,
+            /catch\s+you\s+later/gi,
+            /take\s+care/gi,
+            /have\s+a\s+(?:good|great|nice)\s+(?:day|evening|night|time)/gi,
+            /thank\s+you(?:\s+very\s+much|\s+so\s+much|\s+again)?/gi,
+            /thanks(?:\s+a\s+lot|\s+again)?/gi,
             /good\s+job/gi,
             /great\s+job/gi,
             /nice\s+job/gi,
             /good\s+morning/gi,
             /good\s+afternoon/gi,
             /good\s+evening/gi,
+            /good\s+night/gi,
+            /nice\s+(?:to\s+meet\s+you|meeting\s+you)/gi,
+            /glad\s+(?:to\s+meet\s+you|meeting\s+you)/gi,
             /\b(?:hello|hi|hey|bye|goodbye|thanks|thankyou|thx|cheers|noida|delhi|mumbai|city|location)\b/gi,
             /\b(?:okay|ok)\s+(?:cool|awesome|great|perfect|thanks|thank\s+you)\b/gi
           ];
 
-          let cleanQ = questionText;
           for (const pRegex of unnecessaryPhrases) {
             cleanQ = cleanQ.replace(pRegex, ' ');
           }
-          cleanQ = cleanQ.replace(/[,\s]+/g, ' ').replace(/\s+([?.!])/g, '$1').trim();
+          cleanQ = cleanQ.replace(/[,\s]+/g, ' ').replace(/\s+([?.!])/g, '$1').replace(/^[^a-zA-Z0-9]+/, '').trim();
 
-          // Strip repetitive leading/trailing pleasantry noise ("Thank you", "Thanks")
+          // 3. Strip repetitive leading/trailing pleasantry noise ("Thank you", "Thanks", "See you soon")
           const leadingFillersPattern = /^(?:thank\s+you|thanks|thank|ok|okay|hi|hello|hey|good\s+job|great|awesome|perfect|ah|aha|yeah|yes|sure|right|alright|fine|nice|so|and|then|noida|delhi|mumbai|city|location|bye)[.,!\s]*/gi;
           let prevLen = 0;
           while (cleanQ.length !== prevLen) {
@@ -63,22 +74,35 @@ export function setupCopilotWebSocket(server) {
             cleanQ = cleanQ.replace(leadingFillersPattern, '').trim();
           }
 
-          const trailingFillersPattern = /[.,!\s]*(?:thank\s+you(?:\s+very\s+much)?|thanks|thank|ok|okay|bye|good\s+job|great|awesome|perfect|ah|aha|yeah|yes|sure|right|alright|fine|nice|noida|delhi|mumbai|city|location)[.,!\s]*$/gi;
+          const trailingFillersPattern = /[.,!\s]*(?:thank\s+you(?:\s+very\s+much)?|thanks|thank|ok|okay|bye|good\s+job|great|awesome|perfect|ah|aha|yeah|yes|sure|right|alright|fine|nice|noida|delhi|mumbai|city|location|see\s+you|see\s+you\s+soon|see\s+ya)[.,!\s]*$/gi;
           prevLen = 0;
           while (cleanQ.length !== prevLen) {
             prevLen = cleanQ.length;
             cleanQ = cleanQ.replace(trailingFillersPattern, '').trim();
           }
 
-          // Deduplicate repeated sentences ("Explain what is React? Explain what is React.")
+          // 4. Deduplicate repeated consecutive words/phrases (1-5 words long, e.g. "What is What is CSS?" -> "What is CSS?")
+          let prevText = '';
+          while (cleanQ !== prevText) {
+            prevText = cleanQ;
+            cleanQ = cleanQ.replace(/\b(\w+(?:\s+\w+){0,4})([?.,!\s]+)\1\b/gi, '$1$2');
+          }
+
+          // 5. Deduplicate repeated identical consecutive sentences
           const sentenceArr = cleanQ.split(/(?<=[?.!])\s+/).filter(Boolean);
           const uniqArr = [];
           for (const s of sentenceArr) {
-            if (uniqArr.length === 0 || uniqArr[uniqArr.length - 1].toLowerCase() !== s.toLowerCase()) {
-              uniqArr.push(s);
+            const cleanS = s.trim();
+            if (uniqArr.length === 0 || uniqArr[uniqArr.length - 1].toLowerCase() !== cleanS.toLowerCase()) {
+              uniqArr.push(cleanS);
             }
           }
           cleanQ = uniqArr.join(' ').trim() || cleanQ;
+          cleanQ = cleanQ.replace(/^[^a-zA-Z0-9]+/, '').trim();
+
+          if (cleanQ.length > 0) {
+            cleanQ = cleanQ.charAt(0).toUpperCase() + cleanQ.slice(1);
+          }
 
           if (!cleanQ) return;
 
