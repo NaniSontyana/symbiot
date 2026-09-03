@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Mic, MicOff, Radio, Bot, Eye, ChevronDown, Volume2, User } from 'lucide-react';
 
-export default function AudioVisualizer({
+function AudioVisualizer({
   isStreaming,
   onToggleMic,
   audioLevel,
@@ -222,3 +222,5 @@ export default function AudioVisualizer({
     </div>
   );
 }
+
+export default React.memo(AudioVisualizer);

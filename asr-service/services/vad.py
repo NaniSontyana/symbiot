@@ -4,7 +4,7 @@ class VoiceActivityDetector:
     """
     Enhanced Voice Activity Detector (VAD) with adaptive energy thresholding and silence tracking
     """
-    def __init__(self, energy_threshold: float = 0.000001, silence_duration_frames: int = 4):
+    def __init__(self, energy_threshold: float = 0.00003, silence_duration_frames: int = 4):
         self.energy_threshold = energy_threshold
         self.silence_duration_frames = silence_duration_frames
         self.consecutive_silence = 0

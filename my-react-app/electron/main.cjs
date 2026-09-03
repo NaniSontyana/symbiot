@@ -1,9 +1,10 @@
 const { app, BrowserWindow, globalShortcut, ipcMain, screen, session, desktopCapturer } = require('electron');
 const path = require('path');
 
-// Disable GPU/HTTP disk cache conflicts and isolate session userData for clean launches
+// Disable GPU/HTTP disk cache conflicts, isolate session userData, and allow no-user-gesture WebAudio autoplay
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
 app.commandLine.appendSwitch('disable-http-cache');
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 try {
   app.setPath('userData', path.join(app.getPath('temp'), 'symbiot-electron-userData'));
 } catch (e) {}
@@ -22,6 +23,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
+      autoplayPolicy: 'no-user-gesture-required',
     },
   });
 
@@ -45,6 +47,19 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // Auto-grant media (microphone & audio capture) permissions in Electron
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    if (permission === 'media' || permission === 'display-capture') return true;
+    return true;
+  });
+
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === 'media' || permission === 'display-capture') {
+      return callback(true);
+    }
+    callback(true);
+  });
+
   createWindow();
 
   // Configure Electron Display & Screen Share Request Handler for getDisplayMedia

@@ -268,9 +268,26 @@ export default function App() {
     const normalized = lower.replace(/[^a-z0-9\s]/g, ' ').trim();
     const words = normalized.split(/\s+/).filter(Boolean);
 
+    // Filter out short noise & incomplete 1-3 word utterances (unless ending with explicit ?)
+    const hasQuestionMark = cleanText.includes('?');
+    if (words.length < 4 && !hasQuestionMark) return false;
     if (words.length < 2) return false;
 
-    // 3. Filter out pure pleasantries / acknowledgments / greetings / location chatter
+    // 3. Blocklist meeting setup, audio checks, screen sharing, and pleasantries
+    const setupBlocklist = [
+      'can you hear me', 'hear me okay', 'am i audible', 'can you see my screen',
+      'is my screen visible', 'screen is visible', 'let me share my screen',
+      'sharing my screen', 'how are you', 'how is it going', 'nice to meet you',
+      'what is up', "what's up", 'testing mic', 'audio check', 'testing 1 2 3',
+      'one moment', 'give me a second', 'just a minute', 'hang on', 'stand by',
+      'let us start', 'shall we start', 'ready to begin'
+    ];
+    if (setupBlocklist.some(phrase => lower.includes(phrase))) {
+      console.log(`[ASR Filter] Dropped setup/meeting chatter: "${cleanText}"`);
+      return false;
+    }
+
+    // Filter out pure pleasantries / acknowledgments / greetings / location chatter
     const fillerWords = new Set([
       'thank', 'thanks', 'you', 'very', 'much', 'so', 'ok', 'okay', 'great',
       'good', 'job', 'awesome', 'perfect', 'cool', 'got', 'it', 'ah', 'aha',
@@ -282,9 +299,23 @@ export default function App() {
     const isAllFiller = words.every(w => fillerWords.has(w));
     if (isAllFiller) return false;
 
-    // 4. Must contain an explicit question mark OR a clear question/interview prompt trigger
-    const hasQuestionMark = cleanText.includes('?');
+    // 4. Guard against candidate self-talk & first-person candidate answer phrases ("I'm going to...", "I'm trying to...", "Let me see...")
+    const candidateSpeechBlocklist = [
+      "i'm going to", "i am going to", "i'm trying to", "i am trying to",
+      "i'm not sure", "i am not sure", "i just want to", "let me see",
+      "let me check", "what i'm doing", "what i am doing", "i'm ready to",
+      "i will explain", "i'm going to tell you", "i'm going to go",
+      "so i'm", "so i am", "my experience is", "in my project", "i'll tell you",
+      "we're not going to", "we are not going to", "i just looking",
+      "what i meant", "what i mean", "what i did", "what we did", "what we have",
+      "how we solved", "how we handled", "how we built", "why we chose", "why we used"
+    ];
+    if (candidateSpeechBlocklist.some(d => lower.includes(d))) {
+      console.log(`[ASR Filter] Dropped candidate speech/self-talk: "${cleanText}"`);
+      return false;
+    }
 
+    // 5. Must contain an explicit question mark OR a clear interview question prompt trigger
     const questionTriggers = [
       'what', 'how', 'why', 'where', 'when', 'which', 'who', 'whose', 'whom',
       'can you', 'could you', 'would you', 'will you', 'do you', 'did you',
@@ -307,7 +338,6 @@ export default function App() {
       return false;
     }
 
-    // Require either a question mark OR a question trigger to dispatch to AI
     return hasQuestionMark || hasQuestionTrigger;
   };
 
@@ -467,7 +497,8 @@ export default function App() {
       if (detectedText) {
         if (speaker === 'applicant') {
           console.log(`[Applicant Speech Output]: "${detectedText}"`);
-          // Automatically reset to Interviewer Listening Mode 2s after candidate finishes speaking response
+          // Flush pending interviewer question buffer so candidate answer is NEVER accumulated as an AI question
+          pendingQuestionRef.current = '';
           if (accumulationTimerRef.current) clearTimeout(accumulationTimerRef.current);
           accumulationTimerRef.current = setTimeout(() => {
             if (switchSpeakerRef.current) {
@@ -569,27 +600,21 @@ export default function App() {
               setResponseText('');
             } else if (data.type === 'token_delta') {
               setResponseText((prev) => prev + data.token);
-              setConversationHistory((prev) => {
-                if (prev.length === 0) return prev;
-                const updated = [...prev];
-                const lastIdx = updated.length - 1;
-                updated[lastIdx] = {
-                  ...updated[lastIdx],
-                  answer: updated[lastIdx].answer + data.token,
-                  isGenerating: true
-                };
-                return updated;
-              });
             } else if (data.type === 'end_generating') {
               setIsGenerating(false);
               setConversationHistory((prev) => {
                 if (prev.length === 0) return prev;
                 const updated = [...prev];
                 const lastIdx = updated.length - 1;
-                updated[lastIdx] = {
-                  ...updated[lastIdx],
-                  isGenerating: false
-                };
+                // Sync accumulated responseText into conversationHistory on completion
+                setResponseText((finalText) => {
+                  updated[lastIdx] = {
+                    ...updated[lastIdx],
+                    answer: finalText,
+                    isGenerating: false
+                  };
+                  return finalText;
+                });
                 return updated;
               });
               if (resetAsrBufferRef.current) resetAsrBufferRef.current();
@@ -729,7 +754,15 @@ export default function App() {
               isGenerating={isGenerating}
               latencyMs={latencyMs}
               selectedModel={selectedModel}
-              onClearHistory={() => setConversationHistory([])}
+              onClearHistory={() => {
+                setConversationHistory([]);
+                setActiveQuestion('');
+                setResponseText('');
+                setIsGenerating(false);
+              }}
+              onDeleteTurn={(turnId) => {
+                setConversationHistory((prev) => prev.filter((item) => item.id !== turnId));
+              }}
             />
 
             {!stealthMode && (

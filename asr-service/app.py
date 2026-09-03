@@ -20,13 +20,13 @@ app.add_middleware(
 )
 
 # Read GROQ_API_KEY from backend-gateway/.env if present
-groq_key = os.getenv("GROQ_API_KEY")
+groq_key = (os.getenv("GROQ_API_KEY") or "").strip().strip('"').strip("'")
 if not groq_key and os.path.exists("../backend-gateway/.env"):
     try:
         with open("../backend-gateway/.env", "r") as f:
             for line in f:
                 if line.startswith("GROQ_API_KEY="):
-                    groq_key = line.strip().split("=", 1)[1]
+                    groq_key = line.strip().split("=", 1)[1].strip().strip('"').strip("'")
                     break
     except Exception:
         pass
@@ -83,9 +83,18 @@ async def websocket_transcribe(websocket: WebSocket):
                 # Evaluate Voice Activity Detection (VAD) independently per channel
                 has_speech = target_vad.is_speech(chunk_bytes)
                 
-                # Transcribe upon utterance pause (silence detected >= 0.25s) or max buffer (~1.0s / 32,000 bytes)
-                should_transcribe = (target_vad.is_utterance_complete() and len(target_buffer) >= 6400) or (len(target_buffer) >= 32000)
+                # Transcribe upon utterance pause (silence detected >= 0.25s) with minimum 0.8s audio (~25,600 bytes)
+                should_transcribe = (target_vad.is_utterance_complete() and len(target_buffer) >= 25600)
                 
+                # If buffer reached max size (~1.2s) without VAD speech trigger, drop silent background audio
+                if len(target_buffer) >= 38400:
+                  if not target_vad.has_speech_started:
+                    target_buffer.clear()
+                    target_vad.reset()
+                    should_transcribe = False
+                  else:
+                    should_transcribe = True
+
                 if should_transcribe:
                     res = transcriber.process_audio_buffer(bytes(target_buffer))
                     transcript_text, engine_used = res if isinstance(res, tuple) else (res, "whisper")

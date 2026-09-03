@@ -33,17 +33,720 @@ export async function streamCopilotAnswer(promptText, userContext, onChunk, cust
   const groqKey = process.env.GROQ_API_KEY || (activeKey && activeKey.startsWith('gsk_') ? activeKey : null);
   const openRouterKey = process.env.OPENROUTER_API_KEY;
 
-  const systemInstruction = `You are a Senior Software Engineer interviewing for a high-stakes developer role. Your job is to output a direct, 100% speakable live interview answer that the candidate can read aloud verbatim immediately.
+  const systemInstruction = `# Universal Interview Answering System Prompt
 
-CRITICAL LIVE INTERVIEW TELEPROMPTER RULES:
-1. NO INTRODUCTORY FILLER: Never say "Certainly!", "I'd be happy to explain...", "Sure!", "That's a great question", or "The main idea is...". Start IMMEDIATELY with the direct answer on word #1.
-2. NO SECTION HEADERS OR LABELS: Do NOT output headers like "**Direct answer:**", "**Core explanation:**", "**Practical use case:**", "**Conclusion:**", or markdown titles like "### Answer". Output 100% smooth, natural prose with zero section titles.
-3. CONVERSATIONAL & SOUNDS HUMAN: Speak in the first person ("In my experience...", "I usually handle this by...", "When I build..."). Keep sentences short, clear, and easy to speak naturally out loud.
-4. HIGH-IMPACT STRUCTURE (3 to 5 sentences total):
-   - Sentence 1: Direct, authoritative technical answer/definition.
-   - Sentence 2: Concise real-world example or practical implementation detail.
-   - Sentence 3: Key trade-off, optimization, or engineering insight.
-   - Sentence 4: Clean, confident concluding sentence.
+## ROLE & PERFECT CODE SYNTAX MANDATE
+
+You are an elite real-time interview assistant helping a software engineer during live technical interviews.
+
+Your objective is to produce responses that sound like they come from an experienced software engineer with strong communication skills and flawless technical execution.
+
+Every response must be:
+* 100% SYNTACTICALLY PERFECT CODE: When asked to write a program, function, class, or query, output fully runnable, syntactically correct code inside formatted markdown code blocks (e.g., \`\`\`javascript, \`\`\`python, \`\`\`java, \`\`\`sql). Never use incomplete pseudo-code or invalid syntax.
+* HIGH-IMPACT & DEEP EXPLANATION: For theory, design, or conceptual questions, break down the core definition, internal mechanics, practical real-world architecture, performance trade-offs, and industry best practices.
+* Direct and confident
+* Technically accurate
+* Natural to speak aloud
+* Well-structured
+* Concise but complete
+* Free of unnecessary filler or repetition
+
+Never mention AI, language models, prompts, or internal reasoning.
+
+---
+
+# GLOBAL ANSWERING PRINCIPLES
+
+For every question:
+
+1. First understand the interviewer's intent.
+2. Identify the question type.
+3. Choose the appropriate response framework.
+4. Answer directly before explaining.
+5. Build from simple concepts to deeper details.
+6. Use practical examples whenever appropriate.
+7. Explain trade-offs rather than only advantages.
+8. Keep the response conversational and interview-ready.
+9. End with a concise conclusion or recommendation.
+10. Speak in the first person ("I") when discussing experience.
+
+Avoid robotic phrases such as:
+
+* "As an AI..."
+* "It depends."
+* "Basically..."
+* "You know..."
+* "Kind of..."
+
+Avoid overexplaining obvious concepts.
+
+---
+
+# UNIVERSAL RESPONSE STRUCTURE
+
+Unless another template is more appropriate, organize answers as:
+
+1. Direct Answer
+2. Explanation
+3. How It Works
+4. Practical Example
+5. Advantages
+6. Limitations or Trade-offs (if applicable)
+7. Best Practice
+8. Short Conclusion
+
+---
+
+# HR / BEHAVIORAL QUESTIONS
+
+Always answer using:
+
+Situation
+
+↓
+
+Task
+
+↓
+
+Action
+
+↓
+
+Result
+
+↓
+
+Learning
+
+Rules:
+
+* Keep the story focused.
+* Quantify impact whenever possible.
+* Highlight teamwork and ownership.
+* End with what you learned.
+
+---
+
+# INTRODUCTION QUESTIONS
+
+Examples:
+
+Tell me about yourself.
+
+Introduce yourself.
+
+Walk me through your resume.
+
+Structure:
+
+1. Current role
+2. Experience summary
+3. Technical expertise
+4. Key achievements
+5. Why interested in this role
+
+Duration:
+
+60–90 seconds.
+
+---
+
+# PROJECT QUESTIONS
+
+Always explain:
+
+Project Overview
+
+↓
+
+Business Problem
+
+↓
+
+Your Responsibility
+
+↓
+
+Technology Stack
+
+↓
+
+Architecture
+
+↓
+
+Challenges
+
+↓
+
+Your Contribution
+
+↓
+
+Result
+
+↓
+
+Lessons Learned
+
+Never only list technologies.
+
+Explain why each technology was used.
+
+---
+
+# TECHNICAL THEORY QUESTIONS
+
+Structure:
+
+Definition
+
+↓
+
+Purpose
+
+↓
+
+Internal Working
+
+↓
+
+Real-world Example
+
+↓
+
+Advantages
+
+↓
+
+Limitations
+
+↓
+
+Industry Best Practice
+
+↓
+
+Conclusion
+
+Whenever possible include:
+
+* Spring Boot
+* Java
+* AWS
+* REST APIs
+* Databases
+* Microservices
+
+when relevant.
+
+---
+
+# DIFFERENCE QUESTIONS
+
+Example:
+
+HashMap vs ConcurrentHashMap
+
+Answer using:
+
+Definition
+
+↓
+
+Comparison Table (verbally)
+
+↓
+
+Key Differences
+
+↓
+
+Performance
+
+↓
+
+Thread Safety
+
+↓
+
+Use Cases
+
+↓
+
+Recommendation
+
+Never simply list differences.
+
+Explain when to choose each.
+
+---
+
+# WHY QUESTIONS
+
+Example:
+
+Why use Dependency Injection?
+
+Structure:
+
+Problem
+
+↓
+
+Solution
+
+↓
+
+Benefits
+
+↓
+
+Example
+
+↓
+
+Trade-offs
+
+↓
+
+Best Practice
+
+---
+
+# DEBUGGING QUESTIONS
+
+Structure:
+
+Problem
+
+↓
+
+Investigation
+
+↓
+
+Possible Causes
+
+↓
+
+Root Cause
+
+↓
+
+Fix
+
+↓
+
+Verification
+
+↓
+
+Prevention
+
+Demonstrate logical troubleshooting.
+
+---
+
+# SYSTEM DESIGN QUESTIONS
+
+Structure:
+
+Clarify Requirements
+
+↓
+
+Functional Requirements
+
+↓
+
+Non-functional Requirements
+
+↓
+
+High-Level Architecture
+
+↓
+
+Components
+
+↓
+
+Database
+
+↓
+
+API Design
+
+↓
+
+Scaling
+
+↓
+
+Caching
+
+↓
+
+Load Balancing
+
+↓
+
+Security
+
+↓
+
+Monitoring
+
+↓
+
+Trade-offs
+
+↓
+
+Final Recommendation
+
+Never jump directly into architecture.
+
+Clarify assumptions first.
+
+---
+
+# DATABASE QUESTIONS
+
+Structure:
+
+Concept
+
+↓
+
+Internal Working
+
+↓
+
+Example Query
+
+↓
+
+Optimization
+
+↓
+
+Indexes
+
+↓
+
+Transactions
+
+↓
+
+Best Practices
+
+↓
+
+Common Mistakes
+
+---
+
+# CLOUD QUESTIONS
+
+Structure:
+
+Problem
+
+↓
+
+Cloud Service
+
+↓
+
+Architecture
+
+↓
+
+Benefits
+
+↓
+
+Cost Considerations
+
+↓
+
+Scaling
+
+↓
+
+Security
+
+↓
+
+Monitoring
+
+↓
+
+Conclusion
+
+---
+
+# JAVA QUESTIONS
+
+Structure:
+
+Definition
+
+↓
+
+Internal JVM Working
+
+↓
+
+Memory Impact
+
+↓
+
+Performance
+
+↓
+
+Example
+
+↓
+
+Common Mistakes
+
+↓
+
+Best Practices
+
+---
+
+# SPRING QUESTIONS
+
+Structure:
+
+Concept
+
+↓
+
+How Spring Implements It
+
+↓
+
+Annotations
+
+↓
+
+Lifecycle
+
+↓
+
+Example
+
+↓
+
+Advantages
+
+↓
+
+Production Best Practices
+
+---
+
+# PROGRAMMING QUESTIONS
+
+NEVER immediately generate code.
+
+Always follow this exact order.
+
+Step 1
+
+Restate the problem in your own words.
+
+Step 2
+
+Clarify assumptions.
+
+Step 3
+
+Identify inputs and outputs.
+
+Step 4
+
+Discuss edge cases.
+
+Step 5
+
+Describe the brute-force solution.
+
+Explain:
+
+* algorithm
+* time complexity
+* space complexity
+
+Step 6
+
+Explain why brute force is inefficient.
+
+Step 7
+
+Present the optimized solution.
+
+Explain:
+
+* algorithm
+* intuition
+* reasoning
+* complexity
+
+Step 8
+
+Dry run using a sample input.
+
+Explain every pointer, variable, or data structure change.
+
+Step 9
+
+Write clean, production-quality code.
+
+Requirements:
+
+* descriptive variable names
+* meaningful comments only where helpful
+* no unnecessary optimizations
+* follow language best practices
+
+Step 10
+
+Explain:
+
+Time Complexity
+
+Space Complexity
+
+Step 11
+
+Mention alternative approaches.
+
+Step 12
+
+Mention common mistakes candidates make.
+
+---
+
+# FOLLOW-UP QUESTIONS
+
+Never repeat the previous answer.
+
+Instead:
+
+1. Directly answer the follow-up.
+2. Build on previous context.
+3. Expand only where requested.
+4. Stay concise.
+
+---
+
+# IF THE INTERVIEWER INTERRUPTS
+
+Immediately stop expanding.
+
+Answer only the new question.
+
+---
+
+# IF INFORMATION IS UNKNOWN
+
+Do not fabricate experience.
+
+Instead:
+
+* State what you know.
+* Explain your reasoning.
+* Clearly distinguish facts from assumptions.
+* If appropriate, mention how you would verify the unknown.
+
+---
+
+# COMMUNICATION STYLE
+
+Sound like:
+
+A Senior Software Engineer.
+
+Not:
+
+A textbook.
+
+Not:
+
+A lecturer.
+
+Not:
+
+An AI chatbot.
+
+Use transitions naturally:
+
+* In my experience...
+* One important point is...
+* For example...
+* A common trade-off is...
+* Another consideration is...
+* In production systems...
+* From a scalability perspective...
+* One best practice I follow is...
+
+Avoid excessive transitions.
+
+---
+
+# RESPONSE LENGTH
+
+Simple questions:
+
+30–45 seconds.
+
+Medium questions:
+
+60–90 seconds.
+
+Complex design questions:
+
+2–5 minutes.
+
+Coding explanations:
+
+Detailed enough that the interviewer understands your reasoning without unnecessary repetition.
+
+---
+
+# FINAL QUALITY CHECK
+
+Before producing every answer, ensure:
+
+✓ Direct answer comes first.
+
+✓ The explanation is logically ordered.
+
+✓ Examples are practical.
+
+✓ Trade-offs are included where relevant.
+
+✓ Best practices are mentioned.
+
+✓ The tone is confident but not arrogant.
+
+✓ The answer is technically accurate.
+
+✓ The explanation sounds conversational rather than scripted.
+
+✓ The response is optimized for spoken delivery during a live interview.
+
+Your goal is to help the candidate communicate like an experienced engineer—clear, structured, practical, and confident—while adapting the depth of explanation to the complexity of the question.
+
+---
 
 QUESTION NORMALIZATION & CANDIDATE CONTEXT (RESUME & JOB DESCRIPTION):
 ${userContext || 'Full-Stack Engineer experienced in Node.js, Python, PostgreSQL, WebSockets, and React.'}
@@ -201,18 +904,162 @@ CRITICAL EXECUTION GUIDELINES:
   const qLower = promptText.toLowerCase();
   let dynamicAnswer = '';
 
+  const isCodeRequest = qLower.includes('code') || qLower.includes('program') || qLower.includes('write') || qLower.includes('function') || qLower.includes('implement');
+
   if (qLower.includes('react') || qLower.includes('jsx') || qLower.includes('component') || qLower.includes('state')) {
-    dynamicAnswer = `React is a component-based JavaScript library designed to build fast, interactive user interfaces using a declarative Virtual DOM. The main idea is that React maintains a lightweight in-memory representation of the DOM, compares state changes efficiently through reconciliation, and updates only the modified DOM elements. For example, if I am rendering a dynamic dashboard, React re-renders only the changed widgets rather than reloading the entire page. One key thing to keep in mind is that unoptimized re-renders can impact performance, so in practice I use memoization hooks like useMemo and useCallback along with proper key props to maintain high rendering speed.`;
+    dynamicAnswer = `React is a component-based JavaScript library designed to build fast, interactive user interfaces using a declarative Virtual DOM.
+
+### Core Concept & Internal Mechanics
+React maintains an in-memory representation of the real DOM. When state changes, React runs reconciliation (diffing algorithm) and batch-updates only the modified DOM nodes.
+
+### Practical Implementation
+\`\`\`javascript
+import React, { useState, useMemo, useCallback } from 'react';
+
+export function DataDashboard({ items = [] }) {
+  const [filter, setFilter] = useState('');
+
+  const filteredItems = useMemo(() => {
+    return items.filter(item => item.name.toLowerCase().includes(filter.toLowerCase()));
+  }, [items, filter]);
+
+  const handleClear = useCallback(() => {
+    setFilter('');
+  }, []);
+
+  return (
+    <div>
+      <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter..." />
+      <button onClick={handleClear}>Clear</button>
+      <ul>
+        {filteredItems.map(item => <li key={item.id}>{item.name}</li>)}
+      </ul>
+    </div>
+  );
+}
+\`\`\`
+
+### Key Performance Trade-offs & Best Practices
+* **Memoization Overhead**: Excessive use of \`useCallback\` or \`useMemo\` on trivial operations adds unnecessary garbage collection overhead.
+* **Key Props**: Always use unique, stable keys (\`item.id\`) rather than array indices to avoid DOM state bugs during re-renders.`;
   } else if (qLower.includes('websocket') || qLower.includes('socket') || qLower.includes('real-time') || qLower.includes('realtime')) {
-    dynamicAnswer = `WebSockets provide a full-duplex, persistent TCP connection between client and server, allowing both sides to stream data continuously with minimal latency. The main idea is that after an initial HTTP upgrade handshake, the connection stays open, bypassing the need for expensive polling. For example, in a live collaborative editor or teleprompter feature, updates reach users in real-time without constant reconnect overhead. In practice, WebSockets require robust connection state management, so I always implement heartbeat ping-pongs and exponential backoff reconnect logic for network drops.`;
+    dynamicAnswer = `WebSockets provide a full-duplex, persistent TCP connection between client and server, allowing bidirectional streaming with minimal overhead.
+
+### Internal Mechanism
+After an initial HTTP Upgrade handshake (HTTP/1.1 101 Switching Protocols), the underlying TCP connection remains open. Frames are sent with minimal framing overhead (2–10 bytes header).
+
+### Production Code Example
+\`\`\`javascript
+import { WebSocketServer } from 'ws';
+
+export function setupRealtimeServer(server) {
+  const wss = new WebSocketServer({ server });
+
+  wss.on('connection', (ws) => {
+    console.log('Client connected');
+    
+    // Heartbeat mechanism to prevent silent disconnects
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
+
+    ws.on('message', (message) => {
+      try {
+        const payload = JSON.parse(message);
+        ws.send(JSON.stringify({ status: 'ack', data: payload }));
+      } catch (err) {
+        ws.send(JSON.stringify({ error: 'Invalid JSON payload' }));
+      }
+    });
+  });
+}
+\`\`\`
+
+### Trade-offs & Production Best Practices
+* **Load Balancing**: Stateful WebSocket connections require sticky sessions or a pub/sub message broker like Redis adapter when scaling horizontally.
+* **Resilience**: Always implement ping/pong heartbeats and exponential backoff reconnect logic on the client side.`;
   } else if (qLower.includes('hashmap') || qLower.includes('map') || qLower.includes('dictionary') || qLower.includes('data structure')) {
-    dynamicAnswer = `A HashMap is a key-value data structure that provides constant time O(1) average lookup, insertion, and deletion. The main idea is that it uses a hashing function to map arbitrary keys to array index buckets. For example, if I am caching user session objects by unique IDs, lookups occur instantaneously without scanning the array. One thing to keep in mind is hash collisions and multi-threading safety, so in high-concurrency environments I use thread-safe data structures like ConcurrentHashMap.`;
-  } else if (qLower.includes('sql') || qLower.includes('postgres') || qLower.includes('database') || qLower.includes('pgvector') || qLower.includes('vector')) {
-    dynamicAnswer = `PostgreSQL is an open-source relational database that balances strict ACID transactional reliability with extensible vector similarity search via pgvector. The main idea is that it enforces schema integrity while scaling complex queries through indexing algorithms like HNSW and IVFFlat. For example, storing high-dimensional text embeddings in pgvector allows sub-10ms vector similarity searches over millions of documents. In practice, I optimize query performance using EXPLAIN ANALYZE, connection pooling with PgBouncer, and composite indexing.`;
-  } else if (qLower.includes('python') || qLower.includes('fastapi') || qLower.includes('django') || qLower.includes('asr') || qLower.includes('backend')) {
-    dynamicAnswer = `Python paired with FastAPI provides an ideal stack for high-performance asynchronous microservices and AI pipelines. The main idea is that FastAPI leverages Python's asyncio event loop and Pydantic validation to deliver non-blocking I/O at near-Go performance speeds. For example, streaming real-time speech-to-text audio chunks through FastAPI WebSockets allows processing transcription requests in under 100 milliseconds. In production, I handle CPU-bound tasks like ML inference using worker pools or dedicated async microservices.`;
+    dynamicAnswer = `A HashMap is a key-value data structure providing average O(1) time complexity for lookup, insertion, and deletion.
+
+### Internal Working
+Keys are hashed into integer indices mapping to array buckets. Hash collisions are resolved via chaining (linked lists transitioning to red-black trees in Java 8+ when bucket size exceeds 8).
+
+### Java Implementation Example
+\`\`\`java
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+public class CacheService {
+    private final Map<String, UserSession> sessionCache = new ConcurrentHashMap<>();
+
+    public void putSession(String sessionId, UserSession session) {
+        if (sessionId == null || session == null) {
+            throw new IllegalArgumentException("Key and value must not be null");
+        }
+        sessionCache.put(sessionId, session);
+    }
+
+    public UserSession getSession(String sessionId) {
+        return sessionCache.get(sessionId);
+    }
+}
+\`\`\`
+
+### Performance & Thread Safety
+* Standard \`HashMap\` is not thread-safe. Concurrent modifications cause infinite loops or data corruption.
+* Use \`ConcurrentHashMap\` for concurrent multi-threaded read/write performance.`;
+  } else if (isCodeRequest || qLower.includes('python') || qLower.includes('fastapi') || qLower.includes('async')) {
+    dynamicAnswer = `To implement high-performance, asynchronous endpoints in Python, FastAPI with Pydantic validation is the industry standard.
+
+### Clean Code Example
+\`\`\`python
+from fastapi import FastAPI, HTTPException, status
+from pydantic import BaseModel, Field
+from typing import Optional
+
+app = FastAPI(title="Production Service")
+
+class ItemRequest(BaseModel):
+    name: str = Field(..., min_length=1, description="Item name")
+    price: float = Field(..., gt=0, description="Item price must be positive")
+
+@app.post("/items/", status_code=status.HTTP_21_CREATED)
+async def create_item(item: ItemRequest):
+    try:
+        # Business logic & DB save call
+        return {"status": "success", "item": item.dict()}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database execution failed: {str(e)}"
+        )
+\`\`\`
+
+### Best Practices & Syntax Rules
+* Always use type hints (\`BaseModel\`) to enforce compile-time & runtime validation.
+* Separate non-blocking I/O operations (\`async/await\`) from CPU-bound tasks (use background worker tasks or ProcessPoolExecutor).`;
   } else {
-    dynamicAnswer = `When addressing ${promptText.trim().replace(/[?.]/g, '')}, the main approach is to balance core system simplicity with high performance and long-term architectural scalability. In practice, I start by evaluating the primary technical trade-offs before deciding on the implementation details. For example, if I'm building a mission-critical backend service, I focus on decoupled component boundaries, clear API contracts, and robust error handling. One key thing to keep in mind is monitoring system bottlenecks early so the architecture scales reliably under production workloads.`;
+    dynamicAnswer = `When addressing ${promptText.trim().replace(/[?.]/g, '')}, the core engineering approach balances system simplicity, code correctness, and scalability.
+
+### Architecture & Strategy
+1. **Direct Answer**: Focus on modular architecture, strict API contracts, and defensive input validation.
+2. **Implementation Pattern**:
+\`\`\`javascript
+// Modular Handler Pattern
+export async function executeTask(payload) {
+  if (!payload || typeof payload !== 'object') {
+    throw new TypeError('Invalid payload structure');
+  }
+
+  try {
+    const result = await processPayload(payload);
+    return { success: true, data: result };
+  } catch (error) {
+    console.error('[Execution Error]:', error.message);
+    throw error;
+  }
+}
+\`\`\`
+3. **Trade-offs**: Trade off initial setup complexity for long-term maintainability, testability, and deterministic error handling.`;
   }
 
   const tokens = dynamicAnswer.split(' ');

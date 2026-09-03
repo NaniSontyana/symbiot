@@ -110,22 +110,67 @@ export function setupCopilotWebSocket(server) {
           const normQ = lowerQ.replace(/[^a-z0-9\s]/g, ' ').trim();
           const words = normQ.split(/\s+/).filter(Boolean);
 
-          // Ignore interviewer pleasantries ("Thank you", "Good job", "Ah thank you", "Thanks", "Noida")
+          const hasQuestionMark = cleanQ.includes('?');
+
+          // Filter out short 1-3 word noise unless ending with explicit ?
+          if (words.length < 4 && !hasQuestionMark) {
+            console.log(`[Copilot WS] Ignored short noise utterance (${words.length} words): "${cleanQ}"`);
+            return;
+          }
+
+          // Meeting setup & audio check blocklist
+          const setupBlocklist = [
+            'can you hear me', 'hear me okay', 'am i audible', 'can you see my screen',
+            'is my screen visible', 'screen is visible', 'let me share my screen',
+            'sharing my screen', 'how are you', 'how is it going', 'nice to meet you',
+            'what is up', "what's up", 'testing mic', 'audio check', 'testing 1 2 3',
+            'one moment', 'give me a second', 'just a minute', 'hang on', 'stand by'
+          ];
+          if (setupBlocklist.some(phrase => lowerQ.includes(phrase))) {
+            console.log(`[Copilot WS] Ignored meeting setup chatter: "${cleanQ}"`);
+            return;
+          }
+
+          // Ignore interviewer pleasantries & casual background chatter ("Thank you", "Good job", etc.)
           const fillerWords = new Set([
             'thank', 'thanks', 'you', 'very', 'much', 'so', 'ok', 'okay', 'great',
             'good', 'job', 'awesome', 'perfect', 'cool', 'got', 'it', 'ah', 'aha',
             'yeah', 'yes', 'sure', 'right', 'alright', 'fine', 'nice', 'sounds',
             'makes', 'sense', 'bye', 'hello', 'hi', 'hey', 'there', 'doing', 'back',
-            'well', 'noida', 'delhi', 'bangalore', 'mumbai', 'location', 'city'
+            'well', 'noida', 'delhi', 'bangalore', 'mumbai', 'location', 'city',
+            'know', 'happy', 'day', 'one', 'did', 'leg', 'now', 'what', 'this',
+            'question', 'questioon', 'testing', 'check', 'audio', 'mic'
           ]);
 
           if (words.length > 0 && words.every(w => fillerWords.has(w))) {
-            console.log(`[Copilot WS] Ignored interviewer pleasantry/acknowledgment: "${cleanQ}"`);
+            console.log(`[Copilot WS] Ignored interviewer pleasantry/acknowledgment/noise: "${cleanQ}"`);
+            return;
+          }
+
+          // Ignore meta-questions about the transcription system
+          const isMetaQuestion = /^(?:what\s+(?:is\s+)?(?:this\s+)?questio+n\??|what\??\s*what\??|can\s+you\s+hear\s+me\??|testing\s+audio\??)$/i.test(normQ);
+          if (isMetaQuestion) {
+            console.log(`[Copilot WS] Ignored meta-question noise: "${cleanQ}"`);
+            return;
+          }
+
+          // Candidate self-talk & first-person candidate answer phrases ("I'm going to...", "I'm trying to...", "Let me see...")
+          const candidateSpeechBlocklist = [
+            "i'm going to", "i am going to", "i'm trying to", "i am trying to",
+            "i'm not sure", "i am not sure", "i just want to", "let me see",
+            "let me check", "what i'm doing", "what i am doing", "i'm ready to",
+            "i will explain", "i'm going to tell you", "i'm going to go",
+            "so i'm", "so i am", "my experience is", "in my project", "i'll tell you",
+            "we're not going to", "we are not going to", "i just looking",
+            "what i meant", "what i mean", "what i did", "what we did", "what we have",
+            "how we solved", "how we handled", "how we built", "why we chose", "why we used"
+          ];
+          if (candidateSpeechBlocklist.some(d => lowerQ.includes(d))) {
+            console.log(`[Copilot WS] Ignored candidate speech/self-talk: "${cleanQ}"`);
             return;
           }
 
           // Must contain a question mark OR explicit interview question trigger
-          const hasQuestionMark = cleanQ.includes('?');
           const questionTriggers = [
             'what', 'how', 'why', 'where', 'when', 'which', 'who', 'whose', 'whom',
             'can you', 'could you', 'would you', 'will you', 'do you', 'did you',

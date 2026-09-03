@@ -2,7 +2,7 @@ import React from 'react';
 import { Shield, Wifi, WifiOff, Settings, Minimize2, X, MousePointerClick, Monitor } from 'lucide-react';
 import SymbiotLogo from './SymbiotLogo';
 
-export default function Header({
+function Header({
   isConnected,
   stealthMode,
   setStealthMode,
@@ -218,3 +218,5 @@ export default function Header({
     </header>
   );
 }
+
+export default React.memo(Header);

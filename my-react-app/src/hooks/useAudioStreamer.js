@@ -43,6 +43,16 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
   const [audioLevel, setAudioLevel] = useState(0);
   const [micError, setMicError] = useState(null);
 
+  const lastLevelUpdateRef = useRef(0);
+  const updateAudioLevelThrottled = useCallback((newLevel) => {
+    const now = Date.now();
+    // Throttle React state update to ~15 FPS (every 66ms) to prevent 60 FPS root re-renders
+    if (now - lastLevelUpdateRef.current >= 66) {
+      lastLevelUpdateRef.current = now;
+      setAudioLevel(newLevel);
+    }
+  }, []);
+
   const socketRef = useRef(null);
   const audioCtxRef = useRef(null);
   const mediaStreamRef = useRef(null);
@@ -207,15 +217,18 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
       audioCtxRef.current = audioCtx;
 
       const resumeAudio = async () => {
-        if (audioCtx.state === 'suspended') {
-          await audioCtx.resume();
-          console.log('[ASR Streamer] AudioContext resumed successfully');
+        if (audioCtx && audioCtx.state === 'suspended') {
+          try {
+            await audioCtx.resume();
+            console.log('[ASR Streamer] AudioContext resumed successfully');
+          } catch (e) {}
         }
       };
 
       await resumeAudio();
-      window.addEventListener('click', resumeAudio, { once: true });
-      window.addEventListener('keydown', resumeAudio, { once: true });
+      ['click', 'keydown', 'pointerdown', 'mousemove', 'focus', 'mouseenter'].forEach(evt => {
+        window.addEventListener(evt, resumeAudio, { passive: true });
+      });
 
       const source = audioCtx.createMediaStreamSource(stream);
       const muteGain = audioCtx.createGain();
@@ -232,7 +245,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
             audioCtx.resume().catch(() => {});
           }
           if (event.data.type === 'pcm_data') {
-            setAudioLevel(event.data.audioLevel);
+            updateAudioLevelThrottled(event.data.audioLevel);
 
             if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
               const pcmBytes = new Uint8Array(event.data.pcmBuffer);
@@ -268,7 +281,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
           }
           const rms = Math.sqrt(sum / inputData.length);
           const level = Math.min(100, Math.floor(rms * 500));
-          setAudioLevel(level);
+          updateAudioLevelThrottled(level);
 
           if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
             const pcmBuffer = resampleAndConvertToInt16(inputData, audioCtx.sampleRate, 16000);
@@ -361,7 +374,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
         }
         const rms = Math.sqrt(sum / inputData.length);
         const level = Math.min(100, Math.floor(rms * 500));
-        setAudioLevel(level);
+        updateAudioLevelThrottled(level);
 
         if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
           const pcmBuffer = resampleAndConvertToInt16(inputData, sysCtx.sampleRate, 16000);

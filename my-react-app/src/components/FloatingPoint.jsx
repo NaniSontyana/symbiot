@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { Maximize2, X } from 'lucide-react';
 import SymbiotLogo from './SymbiotLogo';
 
-export default function FloatingPoint({ onExpand, onExitApp, isGenerating, isStreaming, stealthMode }) {
+function FloatingPoint({ onExpand, onExitApp, isGenerating, isStreaming, stealthMode }) {
   const [position, setPosition] = useState({ x: 24, y: 24 });
   const [isDragging, setIsDragging] = useState(false);
   const isMovedRef = useRef(false);
@@ -166,3 +166,5 @@ export default function FloatingPoint({ onExpand, onExitApp, isGenerating, isStr
     </div>
   );
 }
+
+export default React.memo(FloatingPoint);

@@ -56,17 +56,23 @@ class ParakeetTranscriber:
     """
     Real-Time Speech-to-Text Transcriber with Groq Cloud Whisper (<90ms) & local faster-whisper fallback
     """
-    def __init__(self, model_size: str = "base.en", groq_api_key: str = None):
+    def __init__(self, model_size: str = "small.en", groq_api_key: str = None):
         self.model_name = model_size
         self.model = None
         self.use_faster_whisper = False
-        self.groq_api_key = groq_api_key or os.getenv("GROQ_API_KEY")
+        self.groq_api_key = (groq_api_key or os.getenv("GROQ_API_KEY") or "").strip().strip('"').strip("'")
         self.groq_cooldown_until = 0.0
+        self.last_groq_request_time = 0.0
+        self._local_model_loaded = False
 
+    def _ensure_local_model(self):
+        if self._local_model_loaded:
+            return
+        self._local_model_loaded = True
         try:
             from faster_whisper import WhisperModel
-            logger.info(f"Loading local faster-whisper model '{model_size}' on CPU (int8)...")
-            self.model = WhisperModel(model_size, device="cpu", compute_type="int8")
+            logger.info(f"Loading local faster-whisper model '{self.model_name}' on CPU (int8)...")
+            self.model = WhisperModel(self.model_name, device="cpu", compute_type="int8")
             self.use_faster_whisper = True
             logger.info("Local faster-whisper STT engine initialized successfully")
         except Exception as e:
@@ -79,9 +85,12 @@ class ParakeetTranscriber:
         if not self.groq_api_key or not self.groq_api_key.startswith("gsk_"):
             return ""
 
-        # Check if rate-limited (HTTP 429 cooldown)
-        if time.time() < self.groq_cooldown_until:
+        # Check if rate-limited (HTTP 429 cooldown) or within 800ms spacing window
+        now = time.time()
+        if now < self.groq_cooldown_until or (now - self.last_groq_request_time) < 0.8:
             return ""
+
+        self.last_groq_request_time = now
 
         try:
             norm_audio = normalize_audio(audio_bytes)
@@ -109,8 +118,13 @@ class ParakeetTranscriber:
             body.extend(b'Content-Disposition: form-data; name="response_format"\r\n\r\n')
             body.extend(b'json\r\n')
 
-            # 5. Natural clean prompt context without meta labels
-            clean_prompt = "The candidate and interviewer are discussing software development, database design, vector indexing, system architecture, microservices, PostgreSQL, WebSockets, Python, React, and Node.js."
+            # 5. Domain-specific context prompt for Whisper to accurately recognize technical vocabulary
+            clean_prompt = (
+                "Technical job interview discussion covering software engineering, system design, "
+                "data structures, algorithms, frontend and backend development, React, Node.js, Express, "
+                "Python, FastAPI, PostgreSQL, SQL queries, WebSockets, REST APIs, Microservices, Docker, "
+                "Kubernetes, CI/CD, Git, VAD, ASR, and cloud architecture."
+            )
             body.extend(f'--{boundary}\r\n'.encode('utf-8'))
             body.extend(b'Content-Disposition: form-data; name="prompt"\r\n\r\n')
             body.extend(clean_prompt.encode('utf-8'))
@@ -156,28 +170,43 @@ class ParakeetTranscriber:
     def clean_hallucination(self, text: str) -> str:
         if not text:
             return ""
-        lower = text.lower().strip()
-        lower_clean = lower.strip(" .!?,;")
+        
+        # Remove bracketed text like [music], (applause), [silence], (coughing)
+        import re
+        cleaned = re.sub(r'\[.*?\]|\(.*?\)', '', text).strip()
+        if not cleaned:
+            return ""
 
-        # Standalone silence hallucinations
+        lower = cleaned.lower().strip()
+        lower_clean = lower.strip(" .!?,;:")
+
+        # Standalone silence & low-audio hallucinations common in Whisper
         standalone_hallucinations = {
             'thank you', 'you', 'thanks', 'thank you for watching', 'thanks for watching',
             'thank you very much', 'subtitles by amara.org', 'bye', 'goodbye', 'hello',
-            'thank you.', 'you.'
+            'thank you.', 'you.', 'listening', 'listening...', 'silence', 'music',
+            'the end', 'subscribe', 'like and subscribe', 'subscribe to the channel',
+            'so', 'yeah', 'uh', 'um', 'oh', 'what', 'ok', 'okay', 'right', 'alright',
+            'see you', 'see ya', 'take care', 'good job', 'great job', 'testing',
+            'can you hear me', 'can you see my screen', 'audio check',
+            "so, let's go.", "so, let's go", "so let's go.", "so let's go",
+            "let's go.", "let's go", "love you", "love you!", "love you."
         }
-        if lower_clean in standalone_hallucinations:
-            logger.info(f"[ASR Cleaner] Dropped standalone silence hallucination: '{text}'")
+        if lower_clean in standalone_hallucinations or len(lower_clean) <= 1:
+            logger.info(f"[ASR Cleaner] Dropped noise/standalone hallucination: '{text}'")
             return ""
 
         hallucinations = [
-          'sous-titrage', 'radio-canada', 'amara.org', 'subtitles by', 'thank you for watching',
-          'subscribe to', 'pog.org', 'pyscript', 'psyche', 'shizuk', 'particip', 'mbc',
-          'tentical', 'dicenical', 'ssshh'
+            'sous-titrage', 'radio-canada', 'amara.org', 'subtitles by', 'thank you for watching',
+            'subscribe to', 'pog.org', 'pyscript', 'psyche', 'shizuk', 'particip', 'mbc',
+            'tentical', 'dicenical', 'ssshh', 'captioned by', 'translated by', 'copyright',
+            'all rights reserved', "so, let's go"
         ]
         if any(h in lower for h in hallucinations):
             logger.info(f"[ASR Cleaner] Dropped subtitle hallucination: '{text}'")
             return ""
-        return text
+
+        return cleaned
 
     def process_audio_buffer(self, audio_bytes: bytes) -> tuple:
         """
@@ -189,12 +218,12 @@ class ParakeetTranscriber:
         # 1. Normalize audio volume to boost soft microphone inputs
         norm_bytes = normalize_audio(audio_bytes)
 
-        # 2. Digital Zero Filter: Only drop zero/near-zero audio buffers (< 0.00005 RMS)
+        # 2. Digital Zero Filter: Drop audio buffers below minimum speech energy floor (< 0.0003 RMS)
         aligned_len = len(norm_bytes) - (len(norm_bytes) % 2)
         samples = np.frombuffer(norm_bytes[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0
         rms_energy = np.sqrt(np.mean(samples ** 2)) if len(samples) > 0 else 0.0
 
-        if rms_energy < 0.00005:
+        if rms_energy < 0.0003:
             return "", "none"
 
         # 3. Try Groq Cloud Whisper (<90ms ultra-low latency)
@@ -205,6 +234,7 @@ class ParakeetTranscriber:
                 return clean_text, "groq-whisper-v3-turbo"
 
         # 4. Local Faster-Whisper Fallback
+        self._ensure_local_model()
         if self.use_faster_whisper and self.model:
             try:
                 audio_np = np.frombuffer(norm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
@@ -212,7 +242,9 @@ class ParakeetTranscriber:
                     audio_np,
                     beam_size=1,
                     language="en",
-                    vad_filter=True
+                    vad_filter=True,
+                    no_speech_threshold=0.5,
+                    condition_on_previous_text=False
                 )
                 text = " ".join([segment.text for segment in segments]).strip()
                 clean_text = self.clean_hallucination(text)
