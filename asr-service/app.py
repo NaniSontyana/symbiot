@@ -83,20 +83,17 @@ async def websocket_transcribe(websocket: WebSocket):
                 # Evaluate Voice Activity Detection (VAD) independently per channel
                 has_speech = target_vad.is_speech(chunk_bytes)
                 
-                # Transcribe upon utterance pause (silence detected >= 0.25s) with minimum 0.8s audio (~25,600 bytes)
-                should_transcribe = (target_vad.is_utterance_complete() and len(target_buffer) >= 25600)
+                # Transcribe upon complete utterance pause (min 0.4s audio) OR max speech buffer (~1.0s)
+                should_transcribe = (target_vad.is_utterance_complete() and len(target_buffer) >= 12800) or (target_vad.has_speech_started and len(target_buffer) >= 32000) or (len(target_buffer) >= 32000)
                 
-                # If buffer reached max size (~1.2s) without VAD speech trigger, drop silent background audio
-                if len(target_buffer) >= 38400:
-                  if not target_vad.has_speech_started:
+                # If buffer reached 32,000 bytes without speech having started, clear silent background noise
+                if len(target_buffer) >= 32000 and not target_vad.has_speech_started:
                     target_buffer.clear()
                     target_vad.reset()
                     should_transcribe = False
-                  else:
-                    should_transcribe = True
 
                 if should_transcribe:
-                    res = transcriber.process_audio_buffer(bytes(target_buffer))
+                    res = await asyncio.to_thread(transcriber.process_audio_buffer, bytes(target_buffer))
                     transcript_text, engine_used = res if isinstance(res, tuple) else (res, "whisper")
                     if transcript_text:
                         logger.info(f"[ASR WS] Transcribed [{channel}] [{engine_used}]: '{transcript_text}'")

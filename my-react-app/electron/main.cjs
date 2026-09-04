@@ -1,10 +1,12 @@
-const { app, BrowserWindow, globalShortcut, ipcMain, screen, session, desktopCapturer } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, screen, session, desktopCapturer, systemPreferences } = require('electron');
 const path = require('path');
 
 // Disable GPU/HTTP disk cache conflicts, isolate session userData, and allow no-user-gesture WebAudio autoplay
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
 app.commandLine.appendSwitch('disable-http-cache');
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
+
 try {
   app.setPath('userData', path.join(app.getPath('temp'), 'symbiot-electron-userData'));
 } catch (e) {}
@@ -47,14 +49,19 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // Request OS-level microphone access permission
+  if (systemPreferences && systemPreferences.askForMediaAccess) {
+    systemPreferences.askForMediaAccess('microphone').catch(() => {});
+  }
+
   // Auto-grant media (microphone & audio capture) permissions in Electron
   session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
-    if (permission === 'media' || permission === 'display-capture') return true;
+    if (permission === 'media' || permission === 'display-capture' || permission === 'audioCapture') return true;
     return true;
   });
 
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    if (permission === 'media' || permission === 'display-capture') {
+    if (permission === 'media' || permission === 'display-capture' || permission === 'audioCapture') {
       return callback(true);
     }
     callback(true);

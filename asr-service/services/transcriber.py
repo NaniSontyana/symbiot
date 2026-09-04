@@ -85,9 +85,9 @@ class ParakeetTranscriber:
         if not self.groq_api_key or not self.groq_api_key.startswith("gsk_"):
             return ""
 
-        # Check if rate-limited (HTTP 429 cooldown) or within 800ms spacing window
+        # Check if rate-limited (HTTP 429 cooldown) or within 700ms spacing window
         now = time.time()
-        if now < self.groq_cooldown_until or (now - self.last_groq_request_time) < 0.8:
+        if now < self.groq_cooldown_until or (now - self.last_groq_request_time) < 0.7:
             return ""
 
         self.last_groq_request_time = now
@@ -200,7 +200,7 @@ class ParakeetTranscriber:
             'sous-titrage', 'radio-canada', 'amara.org', 'subtitles by', 'thank you for watching',
             'subscribe to', 'pog.org', 'pyscript', 'psyche', 'shizuk', 'particip', 'mbc',
             'tentical', 'dicenical', 'ssshh', 'captioned by', 'translated by', 'copyright',
-            'all rights reserved', "so, let's go"
+            'all rights reserved'
         ]
         if any(h in lower for h in hallucinations):
             logger.info(f"[ASR Cleaner] Dropped subtitle hallucination: '{text}'")
@@ -218,12 +218,12 @@ class ParakeetTranscriber:
         # 1. Normalize audio volume to boost soft microphone inputs
         norm_bytes = normalize_audio(audio_bytes)
 
-        # 2. Digital Zero Filter: Drop audio buffers below minimum speech energy floor (< 0.0003 RMS)
+        # 2. Digital Zero Filter: Drop audio buffers below minimum speech energy floor (< 0.00005 RMS)
         aligned_len = len(norm_bytes) - (len(norm_bytes) % 2)
         samples = np.frombuffer(norm_bytes[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0
         rms_energy = np.sqrt(np.mean(samples ** 2)) if len(samples) > 0 else 0.0
 
-        if rms_energy < 0.0003:
+        if rms_energy < 0.00005:
             return "", "none"
 
         # 3. Try Groq Cloud Whisper (<90ms ultra-low latency)
@@ -242,8 +242,8 @@ class ParakeetTranscriber:
                     audio_np,
                     beam_size=1,
                     language="en",
-                    vad_filter=True,
-                    no_speech_threshold=0.5,
+                    vad_filter=False,
+                    no_speech_threshold=0.6,
                     condition_on_previous_text=False
                 )
                 text = " ".join([segment.text for segment in segments]).strip()

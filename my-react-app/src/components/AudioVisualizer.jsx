@@ -72,22 +72,29 @@ function AudioVisualizer({
               {isStreaming ? 'Microphone LIVE' : 'Mic Off'}
             </span>
             {isStreaming && (
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  fontSize: '0.68rem',
-                  fontWeight: 700,
-                  color: '#ffffff',
-                  background: '#171717',
-                  padding: '1px 6px',
-                  borderRadius: '10px',
-                  border: '1px solid #404040'
-                }}
-              >
-                <Radio size={10} color="#ffffff" /> LIVE ON
-              </span>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#171717', padding: '2px 8px', borderRadius: '10px', border: '1px solid #404040' }}>
+                {/* 5-Bar Live Animated Audio Signal Level Meter */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '2px', height: '12px' }}>
+                  {[0.4, 0.8, 1.0, 0.7, 0.5].map((factor, idx) => {
+                    const h = Math.max(3, Math.min(12, Math.round((audioLevel || 0) * 0.12 * factor)));
+                    return (
+                      <span
+                        key={idx}
+                        style={{
+                          width: '2px',
+                          height: `${h}px`,
+                          borderRadius: '1px',
+                          background: audioLevel > 3 ? '#ffffff' : '#666666',
+                          transition: 'height 0.05s ease',
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+                <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#ffffff', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                  <Radio size={10} color="#ffffff" /> LIVE SIGNAL
+                </span>
+              </div>
             )}
           </div>
           {liveTranscript && (

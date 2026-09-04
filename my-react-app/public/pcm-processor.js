@@ -62,7 +62,8 @@ class PcmProcessor extends AudioWorkletProcessor {
       const next = float32Chunk[index + 1] !== undefined ? float32Chunk[index + 1] : current;
 
       const interpolated = current + (next - current) * decimal;
-      const clamped = Math.max(-1, Math.min(1, interpolated));
+      const boosted = interpolated * 5.0; // Boost soft microphone input volume (14dB gain)
+      const clamped = Math.max(-1, Math.min(1, boosted));
       pcmInt16[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
     }
 

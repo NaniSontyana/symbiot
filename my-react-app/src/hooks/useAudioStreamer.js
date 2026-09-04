@@ -7,7 +7,7 @@ function resampleAndConvertToInt16(float32Array, inRate, outRate = 16000) {
   if (inRate === outRate) {
     const pcm = new Int16Array(float32Array.length);
     for (let i = 0; i < float32Array.length; i++) {
-      const s = Math.max(-1, Math.min(1, float32Array[i]));
+      const s = Math.max(-1, Math.min(1, float32Array[i] * 5.0));
       pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
     }
     return pcm.buffer;
@@ -26,7 +26,8 @@ function resampleAndConvertToInt16(float32Array, inRate, outRate = 16000) {
     const next = float32Array[index + 1] !== undefined ? float32Array[index + 1] : current;
 
     const interpolated = current + (next - current) * decimal;
-    const clamped = Math.max(-1, Math.min(1, interpolated));
+    const boosted = interpolated * 5.0; // Boost microphone input volume (14dB gain)
+    const clamped = Math.max(-1, Math.min(1, boosted));
     result[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
   }
 
@@ -79,6 +80,10 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
   // Initialize WebSocket connection to ASR Microservice
   const connectAsrSocket = useCallback(() => {
     try {
+      if (socketRef.current && (socketRef.current.readyState === WebSocket.OPEN || socketRef.current.readyState === WebSocket.CONNECTING)) {
+        return; // Socket is already active or connecting, do not re-create
+      }
+
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
 
       const ws = new WebSocket(asrWsUrl || 'ws://localhost:8000/ws/transcribe');
@@ -104,6 +109,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
 
       ws.onclose = () => {
         console.log('[ASR Streamer] Disconnected from ASR Service. Reconnecting in 2s...');
+        socketRef.current = null;
         reconnectTimerRef.current = setTimeout(() => {
           connectAsrSocket();
         }, 2000);
@@ -125,11 +131,6 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
 
     return () => {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-      stopStreaming();
-      stopSystemAudioShare();
-      if (socketRef.current) {
-        socketRef.current.close();
-      }
     };
   }, [connectAsrSocket]);
 
@@ -201,13 +202,38 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
   // Start real-time audio streaming from user microphone
   const startStreaming = async () => {
     setMicError(null);
+    if (isStreamingRef.current && mediaStreamRef.current && audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+      console.log('[ASR Streamer] Microphone streaming is already active');
+      return;
+    }
+
+    if (mediaStreamRef.current || audioCtxRef.current) {
+      stopStreaming();
+    }
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+      let audioConstraints = {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: true,
+      };
+
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const audioInputs = devices.filter(d => d.kind === 'audioinput');
+        const physicalMic = audioInputs.find(d => d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications');
+        if (physicalMic && physicalMic.deviceId) {
+          audioConstraints.deviceId = { ideal: physicalMic.deviceId };
+          console.log(`[ASR Streamer] Selected microphone hardware: "${physicalMic.label || physicalMic.deviceId}"`);
+        }
+      } catch (e) {}
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+
+      // Force enable all audio tracks
+      stream.getAudioTracks().forEach(track => {
+        track.enabled = true;
+        console.log(`[ASR Streamer] Track: ${track.label || 'Microphone'}, Enabled: ${track.enabled}, Muted: ${track.muted}`);
       });
 
       mediaStreamRef.current = stream;
@@ -215,6 +241,12 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       const audioCtx = new AudioCtx();
       audioCtxRef.current = audioCtx;
+
+      if (audioCtx.state === 'suspended') {
+        try {
+          await audioCtx.resume();
+        } catch (e) {}
+      }
 
       const resumeAudio = async () => {
         if (audioCtx && audioCtx.state === 'suspended') {
@@ -230,15 +262,24 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
         window.addEventListener(evt, resumeAudio, { passive: true });
       });
 
+      if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+        connectAsrSocket();
+      }
+
       const source = audioCtx.createMediaStreamSource(stream);
       const muteGain = audioCtx.createGain();
-      muteGain.gain.value = 0;
+      muteGain.gain.value = 0.000001; // Inaudible non-zero gain to prevent Chromium WebAudio graph sleeping
+
+      // Global window references to prevent V8 Garbage Collector from evicting active Web Audio nodes
+      window._symbiotAudioCtx = audioCtx;
+      window._symbiotStream = stream;
 
       // Try AudioWorklet first for glitch-free main-thread decoupled audio streaming
       try {
         await audioCtx.audioWorklet.addModule('/pcm-processor.js');
         const workletNode = new AudioWorkletNode(audioCtx, 'pcm-processor');
         processorRef.current = workletNode;
+        window._symbiotProcessor = workletNode;
 
         workletNode.port.onmessage = (event) => {
           if (audioCtx.state === 'suspended') {
@@ -250,7 +291,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
             if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
               const pcmBytes = new Uint8Array(event.data.pcmBuffer);
               if (pcmBytes.byteLength > 0) {
-                const channelByte = activeSpeakerRef.current === 'applicant' ? 0x02 : 0x01;
+                const channelByte = 0x01; // 0x01 = Interviewer Question Stream
                 const framedBuffer = new Uint8Array(1 + pcmBytes.byteLength);
                 framedBuffer[0] = channelByte;
                 framedBuffer.set(pcmBytes, 1);
@@ -268,6 +309,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
         console.warn('[ASR Streamer] AudioWorklet fallback to ScriptProcessor:', workletErr.message);
         const processor = audioCtx.createScriptProcessor(4096, 1, 1);
         processorRef.current = processor;
+        window._symbiotProcessor = processor;
 
         processor.onaudioprocess = (e) => {
           if (audioCtx.state === 'suspended') {
@@ -287,7 +329,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
             const pcmBuffer = resampleAndConvertToInt16(inputData, audioCtx.sampleRate, 16000);
             const pcmBytes = new Uint8Array(pcmBuffer);
             if (pcmBytes.byteLength > 0) {
-              const channelByte = activeSpeakerRef.current === 'applicant' ? 0x02 : 0x01;
+              const channelByte = 0x01; // 0x01 = Interviewer Question Stream
               const framedBuffer = new Uint8Array(1 + pcmBytes.byteLength);
               framedBuffer[0] = channelByte;
               framedBuffer.set(pcmBytes, 1);
@@ -427,17 +469,20 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
       recognitionRef.current = null;
     }
     if (processorRef.current) {
-      processorRef.current.disconnect();
+      try { processorRef.current.disconnect(); } catch (e) {}
       processorRef.current = null;
     }
     if (audioCtxRef.current) {
-      audioCtxRef.current.close();
+      try { audioCtxRef.current.close(); } catch (e) {}
       audioCtxRef.current = null;
     }
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach((track) => track.stop());
       mediaStreamRef.current = null;
     }
+    delete window._symbiotAudioCtx;
+    delete window._symbiotStream;
+    delete window._symbiotProcessor;
     setIsStreaming(false);
     setAudioLevel(0);
     console.log('[ASR Streamer] Live mic streaming stopped');

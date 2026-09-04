@@ -112,9 +112,26 @@ export function setupCopilotWebSocket(server) {
 
           const hasQuestionMark = cleanQ.includes('?');
 
-          // Filter out short 1-3 word noise unless ending with explicit ?
-          if (words.length < 4 && !hasQuestionMark) {
-            console.log(`[Copilot WS] Ignored short noise utterance (${words.length} words): "${cleanQ}"`);
+          // Question triggers list for recognizing technical interview questions
+          const questionTriggers = [
+            'what', 'how', 'why', 'where', 'when', 'which', 'who', 'whose', 'whom',
+            'can you', 'could you', 'would you', 'will you', 'do you', 'did you',
+            'have you', 'are you', 'is there', 'tell me', 'explain', 'describe',
+            'walk me through', 'elaborate', 'discuss', 'difference', 'compare',
+            'pros and cons', 'trade off', 'tradeoff', 'design', 'implement', 'build',
+            'architecture', 'optimize', 'scale', 'experience', 'opinion', 'perspective',
+            'thoughts'
+          ];
+          const hasQuestionTrigger = questionTriggers.some(t => lowerQ.includes(t));
+
+          // Filter out short 1-word noise or <4 word phrases lacking explicit question mark or trigger
+          if (words.length < 2) {
+            console.log(`[Copilot WS] Ignored single-word noise: "${cleanQ}"`);
+            return;
+          }
+
+          if (words.length < 4 && !hasQuestionMark && !hasQuestionTrigger) {
+            console.log(`[Copilot WS] Ignored short non-question phrase (${words.length} words): "${cleanQ}"`);
             return;
           }
 
@@ -169,18 +186,6 @@ export function setupCopilotWebSocket(server) {
             console.log(`[Copilot WS] Ignored candidate speech/self-talk: "${cleanQ}"`);
             return;
           }
-
-          // Must contain a question mark OR explicit interview question trigger
-          const questionTriggers = [
-            'what', 'how', 'why', 'where', 'when', 'which', 'who', 'whose', 'whom',
-            'can you', 'could you', 'would you', 'will you', 'do you', 'did you',
-            'have you', 'are you', 'is there', 'tell me', 'explain', 'describe',
-            'walk me through', 'elaborate', 'discuss', 'difference', 'compare',
-            'pros and cons', 'trade off', 'tradeoff', 'design', 'implement', 'build',
-            'architecture', 'optimize', 'scale', 'experience', 'opinion', 'perspective',
-            'thoughts'
-          ];
-          const hasQuestionTrigger = questionTriggers.some(t => lowerQ.includes(t));
 
           if (!hasQuestionMark && !hasQuestionTrigger) {
             console.log(`[Copilot WS] Ignored non-question interviewer chatter: "${cleanQ}"`);

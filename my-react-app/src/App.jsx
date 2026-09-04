@@ -255,10 +255,7 @@ export default function App() {
     const cleanText = text.trim();
     const lower = cleanText.toLowerCase();
 
-    // 1. Only evaluate when speaker is interviewer/system (ignore applicant speech)
-    if (speaker === 'applicant') return false;
-
-    // 2. Reject Whisper subtitle hallucinations & noise artifacts
+    // Reject Whisper subtitle hallucinations & noise artifacts
     const hallucinations = [
       'sous-titrage', 'radio-canada', 'amara.org', 'subtitles by', 'thank you for watching',
       'subscribe to', 'pog.org', 'pyscript', 'psyche', 'shizuk', 'particip'
@@ -268,77 +265,33 @@ export default function App() {
     const normalized = lower.replace(/[^a-z0-9\s]/g, ' ').trim();
     const words = normalized.split(/\s+/).filter(Boolean);
 
-    // Filter out short noise & incomplete 1-3 word utterances (unless ending with explicit ?)
-    const hasQuestionMark = cleanText.includes('?');
-    if (words.length < 4 && !hasQuestionMark) return false;
+    // Filter out pure single-word noise (allow 2+ word utterances)
     if (words.length < 2) return false;
 
-    // 3. Blocklist meeting setup, audio checks, screen sharing, and pleasantries
+    // 3. Blocklist explicit meeting audio setup checks only
     const setupBlocklist = [
       'can you hear me', 'hear me okay', 'am i audible', 'can you see my screen',
       'is my screen visible', 'screen is visible', 'let me share my screen',
-      'sharing my screen', 'how are you', 'how is it going', 'nice to meet you',
-      'what is up', "what's up", 'testing mic', 'audio check', 'testing 1 2 3',
-      'one moment', 'give me a second', 'just a minute', 'hang on', 'stand by',
-      'let us start', 'shall we start', 'ready to begin'
+      'sharing my screen', 'testing mic', 'audio check', 'testing 1 2 3'
     ];
     if (setupBlocklist.some(phrase => lower.includes(phrase))) {
       console.log(`[ASR Filter] Dropped setup/meeting chatter: "${cleanText}"`);
       return false;
     }
 
-    // Filter out pure pleasantries / acknowledgments / greetings / location chatter
+    // Filter out pure single-word pleasantries/acknowledgments
     const fillerWords = new Set([
       'thank', 'thanks', 'you', 'very', 'much', 'so', 'ok', 'okay', 'great',
       'good', 'job', 'awesome', 'perfect', 'cool', 'got', 'it', 'ah', 'aha',
       'yeah', 'yes', 'sure', 'right', 'alright', 'fine', 'nice', 'sounds',
-      'makes', 'sense', 'bye', 'hello', 'hi', 'hey', 'there', 'doing', 'back',
-      'well', 'noida', 'delhi', 'bangalore', 'mumbai', 'location', 'city'
+      'makes', 'sense', 'bye', 'hello', 'hi', 'hey', 'there', 'doing', 'back'
     ]);
 
     const isAllFiller = words.every(w => fillerWords.has(w));
     if (isAllFiller) return false;
 
-    // 4. Guard against candidate self-talk & first-person candidate answer phrases ("I'm going to...", "I'm trying to...", "Let me see...")
-    const candidateSpeechBlocklist = [
-      "i'm going to", "i am going to", "i'm trying to", "i am trying to",
-      "i'm not sure", "i am not sure", "i just want to", "let me see",
-      "let me check", "what i'm doing", "what i am doing", "i'm ready to",
-      "i will explain", "i'm going to tell you", "i'm going to go",
-      "so i'm", "so i am", "my experience is", "in my project", "i'll tell you",
-      "we're not going to", "we are not going to", "i just looking",
-      "what i meant", "what i mean", "what i did", "what we did", "what we have",
-      "how we solved", "how we handled", "how we built", "why we chose", "why we used"
-    ];
-    if (candidateSpeechBlocklist.some(d => lower.includes(d))) {
-      console.log(`[ASR Filter] Dropped candidate speech/self-talk: "${cleanText}"`);
-      return false;
-    }
-
-    // 5. Must contain an explicit question mark OR a clear interview question prompt trigger
-    const questionTriggers = [
-      'what', 'how', 'why', 'where', 'when', 'which', 'who', 'whose', 'whom',
-      'can you', 'could you', 'would you', 'will you', 'do you', 'did you',
-      'have you', 'are you', 'is there', 'tell me', 'explain', 'describe',
-      'walk me through', 'elaborate', 'discuss', 'difference', 'compare',
-      'pros and cons', 'trade off', 'tradeoff', 'design', 'implement', 'build',
-      'architecture', 'optimize', 'scale', 'experience', 'opinion', 'perspective',
-      'thoughts'
-    ];
-
-    const hasQuestionTrigger = questionTriggers.some(trigger => lower.includes(trigger));
-
-    // Reject incomplete trailing/transitional phrases without a question mark
-    const trailingConnectors = [
-      'and then', 'and now', 'so we', 'let us', 'going to', 'ahead and', 'we are', 'see'
-    ];
-    const endsWithTrailing = trailingConnectors.some(c => lower.endsWith(c));
-
-    if (!hasQuestionMark && endsWithTrailing) {
-      return false;
-    }
-
-    return hasQuestionMark || hasQuestionTrigger;
+    // Dispatch all 2+ word spoken technical phrases as valid questions
+    return true;
   };
 
   // Strip unnecessary filler words ("thank you", "good job", "hello", "thanks", "see you soon", etc.)
@@ -495,19 +448,7 @@ export default function App() {
     'ws://localhost:8000/ws/transcribe',
     (detectedText, speaker) => {
       if (detectedText) {
-        if (speaker === 'applicant') {
-          console.log(`[Applicant Speech Output]: "${detectedText}"`);
-          // Flush pending interviewer question buffer so candidate answer is NEVER accumulated as an AI question
-          pendingQuestionRef.current = '';
-          if (accumulationTimerRef.current) clearTimeout(accumulationTimerRef.current);
-          accumulationTimerRef.current = setTimeout(() => {
-            if (switchSpeakerRef.current) {
-              console.log('[Turn Protocol] Candidate response finished. Resetting to Interviewer Listening Mode...');
-              switchSpeakerRef.current('interviewer');
-            }
-          }, 2000);
-          return;
-        }
+        console.log(`[ASR Speech Output] [${speaker}]: "${detectedText}"`);
 
         // Clean all unnecessary filler words ("thank you", "good job", "thanks", etc.) BEFORE recording into buffer
         const cleanChunk = cleanUnnecessaryWords(detectedText);
@@ -518,10 +459,10 @@ export default function App() {
 
         if (accumulationTimerRef.current) clearTimeout(accumulationTimerRef.current);
 
-        // Require a 2400ms (2.4s) complete silence pause after speech before dispatching complete question
+        // Require an 800ms complete silence pause after speech before dispatching complete question
         accumulationTimerRef.current = setTimeout(() => {
           dispatchAccumulatedQuestion(pendingQuestionRef.current);
-        }, 2400);
+        }, 800);
       }
     }
   );
@@ -618,10 +559,6 @@ export default function App() {
                 return updated;
               });
               if (resetAsrBufferRef.current) resetAsrBufferRef.current();
-              if (switchSpeakerRef.current) {
-                console.log('[Turn Protocol] AI answer streaming complete. Switching to Applicant Response Phase...');
-                switchSpeakerRef.current('applicant');
-              }
             }
           } catch (err) {
             console.error('[Copilot WS] Parse error:', err);
