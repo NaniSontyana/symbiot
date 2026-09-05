@@ -2,13 +2,14 @@ import numpy as np
 
 class VoiceActivityDetector:
     """
-    Enhanced Voice Activity Detector (VAD) with adaptive energy thresholding and silence tracking
+    Enhanced Voice Activity Detector (VAD) with adaptive noise floor estimation and pause tracking
     """
-    def __init__(self, energy_threshold: float = 0.00015, silence_duration_frames: int = 2):
-        self.energy_threshold = energy_threshold
+    def __init__(self, base_energy_threshold: float = 0.00012, silence_duration_frames: int = 4):
+        self.base_energy_threshold = base_energy_threshold
         self.silence_duration_frames = silence_duration_frames
         self.consecutive_silence = 0
         self.has_speech_started = False
+        self.noise_floor = base_energy_threshold / 2.0
 
     def calculate_energy(self, audio_chunk: bytes) -> float:
         if not audio_chunk:
@@ -24,16 +25,22 @@ class VoiceActivityDetector:
         if len(audio_data) == 0:
             return 0.0
 
-        energy = np.mean(audio_data ** 2)
-        return float(energy)
+        energy = float(np.mean(audio_data ** 2))
+        return energy
 
     def is_speech(self, audio_chunk: bytes) -> bool:
         energy = self.calculate_energy(audio_chunk)
-        if energy >= self.energy_threshold:
+        dynamic_threshold = max(self.base_energy_threshold, self.noise_floor * 2.2)
+
+        if energy >= dynamic_threshold:
             self.consecutive_silence = 0
             self.has_speech_started = True
             return True
         else:
+            # Adapt background noise floor during silence (exponential moving average)
+            if not self.has_speech_started and energy > 0:
+                self.noise_floor = 0.95 * self.noise_floor + 0.05 * energy
+
             self.consecutive_silence += 1
             return False
 
@@ -49,4 +56,5 @@ class VoiceActivityDetector:
         """
         self.consecutive_silence = 0
         self.has_speech_started = False
+
 

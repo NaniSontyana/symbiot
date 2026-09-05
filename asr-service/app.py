@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from services.vad import VoiceActivityDetector
@@ -83,11 +84,11 @@ async def websocket_transcribe(websocket: WebSocket):
                 # Evaluate Voice Activity Detection (VAD) independently per channel
                 has_speech = target_vad.is_speech(chunk_bytes)
                 
-                # Transcribe upon complete utterance pause (min 0.4s audio) OR max speech buffer (~1.0s)
-                should_transcribe = (target_vad.is_utterance_complete() and len(target_buffer) >= 12800) or (target_vad.has_speech_started and len(target_buffer) >= 32000) or (len(target_buffer) >= 32000)
+                # Transcribe upon complete utterance pause (min 0.5s audio) OR max speech buffer (~3.0s / 96,000 bytes)
+                should_transcribe = (target_vad.is_utterance_complete() and len(target_buffer) >= 16000) or (len(target_buffer) >= 96000)
                 
-                # If buffer reached 32,000 bytes without speech having started, clear silent background noise
-                if len(target_buffer) >= 32000 and not target_vad.has_speech_started:
+                # If buffer reached 64,000 bytes (2.0s) without speech having started, clear silent background noise
+                if len(target_buffer) >= 64000 and not target_vad.has_speech_started:
                     target_buffer.clear()
                     target_vad.reset()
                     should_transcribe = False

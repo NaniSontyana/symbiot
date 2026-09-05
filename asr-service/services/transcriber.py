@@ -120,10 +120,10 @@ class ParakeetTranscriber:
 
             # 5. Domain-specific context prompt for Whisper to accurately recognize technical vocabulary
             clean_prompt = (
-                "Technical job interview discussion covering software engineering, system design, "
-                "data structures, algorithms, frontend and backend development, React, Node.js, Express, "
-                "Python, FastAPI, PostgreSQL, SQL queries, WebSockets, REST APIs, Microservices, Docker, "
-                "Kubernetes, CI/CD, Git, VAD, ASR, and cloud architecture."
+                "Technical software engineering job interview discussion covering coding, system design, "
+                "data structures, algorithms, frontend and backend architecture, React, Next.js, Node.js, Express, "
+                "Python, FastAPI, TypeScript, JavaScript, PostgreSQL, MongoDB, Redis, WebSockets, REST APIs, "
+                "Microservices, Docker, Kubernetes, CI/CD, Git, GitHub, VAD, ASR, LLM, and Cloud Services."
             )
             body.extend(f'--{boundary}\r\n'.encode('utf-8'))
             body.extend(b'Content-Disposition: form-data; name="prompt"\r\n\r\n')
@@ -171,11 +171,14 @@ class ParakeetTranscriber:
         if not text:
             return ""
         
-        # Remove bracketed text like [music], (applause), [silence], (coughing)
         import re
+        # Remove bracketed text like [music], (applause), [silence], (coughing)
         cleaned = re.sub(r'\[.*?\]|\(.*?\)', '', text).strip()
         if not cleaned:
             return ""
+
+        # Deduplicate consecutive repeated words or phrases (e.g. "React React React" -> "React")
+        cleaned = re.sub(r'\b(\w+)(?:\s+\1){2,}\b', r'\1', cleaned, flags=re.IGNORECASE)
 
         lower = cleaned.lower().strip()
         lower_clean = lower.strip(" .!?,;:")
@@ -218,12 +221,12 @@ class ParakeetTranscriber:
         # 1. Normalize audio volume to boost soft microphone inputs
         norm_bytes = normalize_audio(audio_bytes)
 
-        # 2. Digital Zero Filter: Drop audio buffers below minimum speech energy floor (< 0.00005 RMS)
+        # 2. Digital Zero Filter: Drop audio buffers below minimum speech energy floor (< 0.00008 RMS)
         aligned_len = len(norm_bytes) - (len(norm_bytes) % 2)
         samples = np.frombuffer(norm_bytes[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0
         rms_energy = np.sqrt(np.mean(samples ** 2)) if len(samples) > 0 else 0.0
 
-        if rms_energy < 0.00005:
+        if rms_energy < 0.00008:
             return "", "none"
 
         # 3. Try Groq Cloud Whisper (<90ms ultra-low latency)
@@ -242,7 +245,7 @@ class ParakeetTranscriber:
                     audio_np,
                     beam_size=1,
                     language="en",
-                    vad_filter=False,
+                    vad_filter=True,
                     no_speech_threshold=0.6,
                     condition_on_previous_text=False
                 )
