@@ -243,12 +243,19 @@ class ParakeetTranscriber:
         if self.use_faster_whisper and self.model:
             try:
                 audio_np = np.frombuffer(norm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+                technical_prompt = (
+                    "Technical software engineering job interview covering coding, system design, "
+                    "data structures, algorithms, frontend and backend architecture, React, Next.js, Node.js, Express, "
+                    "Python, FastAPI, TypeScript, JavaScript, PostgreSQL, pgvector, HNSW, MongoDB, Redis, WebSockets, REST APIs, "
+                    "Microservices, Docker, Kubernetes, CI/CD, Git, GitHub, VAD, ASR, LLM, and Cloud Services."
+                )
                 segments, _ = self.model.transcribe(
                     audio_np,
                     beam_size=1,
                     language="en",
                     vad_filter=True,
-                    no_speech_threshold=0.6,
+                    no_speech_threshold=0.5,
+                    initial_prompt=technical_prompt,
                     condition_on_previous_text=False
                 )
                 text = " ".join([segment.text for segment in segments]).strip()
