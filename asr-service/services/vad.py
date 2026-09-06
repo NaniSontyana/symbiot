@@ -2,9 +2,9 @@ import numpy as np
 
 class VoiceActivityDetector:
     """
-    Enhanced Voice Activity Detector (VAD) with adaptive noise floor estimation and pause tracking
+    Enhanced Voice Activity Detector (VAD) with adaptive noise floor estimation and real-time pause tracking
     """
-    def __init__(self, base_energy_threshold: float = 0.00012, silence_duration_frames: int = 4):
+    def __init__(self, base_energy_threshold: float = 0.00003, silence_duration_frames: int = 2):
         self.base_energy_threshold = base_energy_threshold
         self.silence_duration_frames = silence_duration_frames
         self.consecutive_silence = 0

@@ -84,11 +84,12 @@ async def websocket_transcribe(websocket: WebSocket):
                 # Evaluate Voice Activity Detection (VAD) independently per channel
                 has_speech = target_vad.is_speech(chunk_bytes)
                 
-                # Transcribe upon complete utterance pause (min 0.5s audio) OR max speech buffer (~3.0s / 96,000 bytes)
-                should_transcribe = (target_vad.is_utterance_complete() and len(target_buffer) >= 16000) or (len(target_buffer) >= 96000)
+                # Transcribe upon complete utterance pause (min ~0.3s audio / 9600 bytes) OR max speech buffer (~1.0s / 32,000 bytes)
+                should_transcribe = (target_vad.is_utterance_complete() and len(target_buffer) >= 9600) or (len(target_buffer) >= 32000)
                 
-                # If buffer reached 64,000 bytes (2.0s) without speech having started, clear silent background noise
-                if len(target_buffer) >= 64000 and not target_vad.has_speech_started:
+                # If buffer reached 32,000 bytes without speech having started, clear silent background noise
+                if len(target_buffer) >= 32000 and not target_vad.has_speech_started:
+                    logger.debug(f"[ASR WS] Low energy audio dropped for {channel} (buffer: {len(target_buffer)})")
                     target_buffer.clear()
                     target_vad.reset()
                     should_transcribe = False
@@ -111,9 +112,10 @@ async def websocket_transcribe(websocket: WebSocket):
                         target_buffer.clear()
                         target_vad.reset()
                     else:
-                        # Clear buffer if audio was silence or empty hallucination
-                        target_buffer.clear()
-                        target_vad.reset()
+                        # If transcript was empty/rate-limited, keep buffer unless it exceeds 48KB max size
+                        if len(target_buffer) >= 48000:
+                            target_buffer.clear()
+                            target_vad.reset()
             elif "text" in message and message["text"]:
                 try:
                     payload = json.loads(message["text"])

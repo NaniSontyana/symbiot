@@ -213,18 +213,18 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
 
     try {
       let audioConstraints = {
-        echoCancellation: false,
-        noiseSuppression: false,
+        echoCancellation: true,
+        noiseSuppression: true,
         autoGainControl: true,
       };
 
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const audioInputs = devices.filter(d => d.kind === 'audioinput');
-        const physicalMic = audioInputs.find(d => d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications');
-        if (physicalMic && physicalMic.deviceId) {
-          audioConstraints.deviceId = { ideal: physicalMic.deviceId };
-          console.log(`[ASR Streamer] Selected microphone hardware: "${physicalMic.label || physicalMic.deviceId}"`);
+        const activeMic = audioInputs.find(d => d.deviceId === 'default') || audioInputs[0];
+        if (activeMic && activeMic.deviceId) {
+          audioConstraints.deviceId = { ideal: activeMic.deviceId };
+          console.log(`[ASR Streamer] Selected microphone hardware: "${activeMic.label || activeMic.deviceId}"`);
         }
       } catch (e) {}
 
@@ -291,7 +291,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
             if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
               const pcmBytes = new Uint8Array(event.data.pcmBuffer);
               if (pcmBytes.byteLength > 0) {
-                const channelByte = 0x01; // 0x01 = Interviewer Question Stream
+                const channelByte = activeSpeakerRef.current === 'applicant' ? 0x02 : 0x01;
                 const framedBuffer = new Uint8Array(1 + pcmBytes.byteLength);
                 framedBuffer[0] = channelByte;
                 framedBuffer.set(pcmBytes, 1);
@@ -329,7 +329,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
             const pcmBuffer = resampleAndConvertToInt16(inputData, audioCtx.sampleRate, 16000);
             const pcmBytes = new Uint8Array(pcmBuffer);
             if (pcmBytes.byteLength > 0) {
-              const channelByte = 0x01; // 0x01 = Interviewer Question Stream
+              const channelByte = activeSpeakerRef.current === 'applicant' ? 0x02 : 0x01;
               const framedBuffer = new Uint8Array(1 + pcmBytes.byteLength);
               framedBuffer[0] = channelByte;
               framedBuffer.set(pcmBytes, 1);

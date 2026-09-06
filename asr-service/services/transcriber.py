@@ -85,9 +85,9 @@ class ParakeetTranscriber:
         if not self.groq_api_key or not self.groq_api_key.startswith("gsk_"):
             return ""
 
-        # Check if rate-limited (HTTP 429 cooldown) or within 700ms spacing window
+        # Check if rate-limited (HTTP 429 cooldown) or within 200ms spacing window
         now = time.time()
-        if now < self.groq_cooldown_until or (now - self.last_groq_request_time) < 0.7:
+        if now < self.groq_cooldown_until or (now - self.last_groq_request_time) < 0.2:
             return ""
 
         self.last_groq_request_time = now
@@ -226,7 +226,7 @@ class ParakeetTranscriber:
         samples = np.frombuffer(norm_bytes[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0
         rms_energy = np.sqrt(np.mean(samples ** 2)) if len(samples) > 0 else 0.0
 
-        if rms_energy < 0.00008:
+        if rms_energy < 0.00002:
             return "", "none"
 
         # 3. Try Groq Cloud Whisper (<90ms ultra-low latency)
