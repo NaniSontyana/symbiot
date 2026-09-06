@@ -88,7 +88,8 @@ async def websocket_transcribe(websocket: WebSocket):
                 has_speech = target_vad.is_speech(chunk_bytes)
                 
                 if chunk_counter % 25 == 0:
-                    logger.info(f"[ASR WS Receiver] Recv chunk #{chunk_counter}: {len(chunk_bytes)} bytes | channel={channel} | has_speech={has_speech} | buf_len={len(target_buffer)}")
+                    chunk_energy = target_vad.calculate_energy(chunk_bytes)
+                    logger.info(f"[ASR WS Receiver] Chunk #{chunk_counter}: {len(chunk_bytes)}B | channel={channel} | energy={chunk_energy:.8f} | speech={has_speech} | buf_len={len(target_buffer)}")
                 
                 # Transcribe upon complete utterance pause (min ~0.3s audio / 9600 bytes) OR max speech buffer (~1.0s / 32,000 bytes)
                 should_transcribe = (target_vad.is_utterance_complete() and len(target_buffer) >= 9600) or (len(target_buffer) >= 32000)

@@ -218,17 +218,27 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
         const audioInputs = devices.filter(d => d.kind === 'audioinput');
         console.log('[ASR Streamer] Available audio input devices:', audioInputs.map(d => `${d.label || 'Unnamed Mic'} (${d.deviceId})`));
         
-        // Try getting audio stream with default constraints first
-        stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+        // Use clean audio constraints without strict APO filtering to prevent Windows driver silence
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: true
+          }
+        });
       } catch (e) {
         console.warn('[ASR Streamer] Standard getUserMedia failed, retrying with raw audio:true constraint:', e);
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       }
 
-      // Force enable all audio tracks
+      // Force enable all audio tracks and log track state
       stream.getAudioTracks().forEach(track => {
         track.enabled = true;
-        console.log(`[ASR Streamer] Track: ${track.label || 'Microphone'}, Enabled: ${track.enabled}, Muted: ${track.muted}`);
+        if (track.muted) {
+          console.warn(`[ASR Streamer WARNING] Microphone track "${track.label}" is MUTED by Windows OS Privacy/Hardware setting!`);
+        } else {
+          console.log(`[ASR Streamer] Track: ${track.label || 'Microphone'}, Enabled: ${track.enabled}, Muted: ${track.muted}`);
+        }
       });
 
       mediaStreamRef.current = stream;
