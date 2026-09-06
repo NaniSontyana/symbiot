@@ -13,7 +13,10 @@ function AudioVisualizer({
   bgMode,
   setBgMode,
   activeSpeaker = 'interviewer',
-  onSwitchSpeaker
+  onSwitchSpeaker,
+  audioDevices = [],
+  selectedMicId = '',
+  onSwitchMicrophone
 }) {
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [showOpacitySlider, setShowOpacitySlider] = useState(false);
@@ -71,6 +74,31 @@ function AudioVisualizer({
             <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#ffffff' }}>
               {isStreaming ? 'Microphone LIVE' : 'Mic Off'}
             </span>
+            {audioDevices.length > 1 && (
+              <select
+                value={selectedMicId}
+                onChange={(e) => onSwitchMicrophone && onSwitchMicrophone(e.target.value)}
+                style={{
+                  padding: '2px 6px',
+                  fontSize: '0.68rem',
+                  fontWeight: 600,
+                  borderRadius: '6px',
+                  border: '1px solid #404040',
+                  color: '#ffffff',
+                  background: '#171717',
+                  cursor: 'pointer',
+                  outline: 'none',
+                  maxWidth: '130px'
+                }}
+                title="Select Microphone Hardware Device"
+              >
+                {audioDevices.map((d, i) => (
+                  <option key={d.deviceId || i} value={d.deviceId} style={{ background: '#000000', color: '#ffffff' }}>
+                    {d.label || `Microphone ${i + 1}`}
+                  </option>
+                ))}
+              </select>
+            )}
             {isStreaming && (
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#171717', padding: '2px 8px', borderRadius: '10px', border: '1px solid #404040' }}>
                 {/* 5-Bar Live Animated Audio Signal Level Meter */}

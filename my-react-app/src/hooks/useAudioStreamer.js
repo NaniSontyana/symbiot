@@ -199,8 +199,32 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     }
   }, []);
 
+  const [audioDevices, setAudioDevices] = useState([]);
+  const [selectedMicId, setSelectedMicId] = useState('');
+
+  // Fetch microphone input devices
+  const loadAudioDevices = useCallback(async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const inputs = devices.filter(d => d.kind === 'audioinput');
+      setAudioDevices(inputs);
+      
+      // Auto-prefer physical Microphone Array over silent generic mic
+      const preferredMic = inputs.find(d => d.label && d.label.toLowerCase().includes('array')) ||
+                           inputs.find(d => d.label && d.label.toLowerCase().includes('realtek')) ||
+                           inputs[0];
+      if (preferredMic && preferredMic.deviceId && !selectedMicId) {
+        setSelectedMicId(preferredMic.deviceId);
+      }
+    } catch (e) {}
+  }, [selectedMicId]);
+
+  useEffect(() => {
+    loadAudioDevices();
+  }, [loadAudioDevices]);
+
   // Start real-time audio streaming from user microphone
-  const startStreaming = async () => {
+  const startStreaming = async (targetDeviceId = null) => {
     setMicError(null);
     if (isStreamingRef.current && mediaStreamRef.current && audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
       console.log('[ASR Streamer] Microphone streaming is already active');
@@ -213,19 +237,31 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
 
     try {
       let stream;
+      const targetId = targetDeviceId || selectedMicId;
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const audioInputs = devices.filter(d => d.kind === 'audioinput');
-        console.log('[ASR Streamer] Available audio input devices:', audioInputs.map(d => `${d.label || 'Unnamed Mic'} (${d.deviceId})`));
-        
-        // Use clean audio constraints without strict APO filtering to prevent Windows driver silence
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: true
-          }
-        });
+        setAudioDevices(audioInputs);
+
+        // Targeted hardware search for Microphone Array
+        const preferredMic = (targetId && audioInputs.find(d => d.deviceId === targetId)) ||
+                             audioInputs.find(d => d.label && d.label.toLowerCase().includes('array')) ||
+                             audioInputs.find(d => d.label && d.label.toLowerCase().includes('realtek')) ||
+                             audioInputs[0];
+
+        let audioConstraints = {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: true,
+        };
+
+        if (preferredMic && preferredMic.deviceId && preferredMic.deviceId !== 'default') {
+          audioConstraints.deviceId = { exact: preferredMic.deviceId };
+          setSelectedMicId(preferredMic.deviceId);
+          console.log(`[ASR Streamer] Targeted physical microphone: "${preferredMic.label || 'Microphone Array'}" (${preferredMic.deviceId})`);
+        }
+
+        stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
       } catch (e) {
         console.warn('[ASR Streamer] Standard getUserMedia failed, retrying with raw audio:true constraint:', e);
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -511,6 +547,17 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     }
   };
 
+  const switchMicrophone = async (deviceId) => {
+    console.log(`[ASR Streamer] Switching microphone device to: ${deviceId}`);
+    setSelectedMicId(deviceId);
+    if (isStreaming) {
+      stopStreaming();
+      setTimeout(() => {
+        startStreaming(deviceId);
+      }, 150);
+    }
+  };
+
   return {
     isStreaming,
     startStreaming,
@@ -524,5 +571,8 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     activeSpeaker,
     switchSpeaker,
     resetAsrBuffer,
+    audioDevices,
+    selectedMicId,
+    switchMicrophone,
   };
 }

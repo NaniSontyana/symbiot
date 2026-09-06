@@ -443,7 +443,10 @@ export default function App() {
     micError,
     activeSpeaker,
     switchSpeaker,
-    resetAsrBuffer
+    resetAsrBuffer,
+    audioDevices,
+    selectedMicId,
+    switchMicrophone
   } = useAudioStreamer(
     'ws://localhost:8000/ws/transcribe',
     (detectedText, speaker) => {
@@ -679,6 +682,9 @@ export default function App() {
               setBgMode={setBgMode}
               activeSpeaker={activeSpeaker}
               onSwitchSpeaker={switchSpeaker}
+              audioDevices={audioDevices}
+              selectedMicId={selectedMicId}
+              onSwitchMicrophone={switchMicrophone}
             />
           </div>
 
