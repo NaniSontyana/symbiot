@@ -93,12 +93,6 @@ async def websocket_transcribe(websocket: WebSocket):
                 # Transcribe upon complete utterance pause (min ~0.3s audio / 9600 bytes) OR max speech buffer (~1.0s / 32,000 bytes)
                 should_transcribe = (target_vad.is_utterance_complete() and len(target_buffer) >= 9600) or (len(target_buffer) >= 32000)
                 
-                # If buffer reached 32,000 bytes without speech having started, clear silent background noise
-                if len(target_buffer) >= 32000 and not target_vad.has_speech_started:
-                    logger.debug(f"[ASR WS] Low energy audio dropped for {channel} (buffer: {len(target_buffer)})")
-                    target_buffer.clear()
-                    target_vad.reset()
-                    should_transcribe = False
 
                 if should_transcribe:
                     res = await asyncio.to_thread(transcriber.process_audio_buffer, bytes(target_buffer))
@@ -118,8 +112,8 @@ async def websocket_transcribe(websocket: WebSocket):
                         target_buffer.clear()
                         target_vad.reset()
                     else:
-                        # If transcript was empty/rate-limited, keep buffer unless it exceeds 48KB max size
-                        if len(target_buffer) >= 48000:
+                        # Clear silent background noise buffers once evaluated
+                        if len(target_buffer) >= 32000:
                             target_buffer.clear()
                             target_vad.reset()
             elif "text" in message and message["text"]:

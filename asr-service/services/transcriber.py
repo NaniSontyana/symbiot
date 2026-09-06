@@ -56,7 +56,7 @@ class ParakeetTranscriber:
     """
     Real-Time Speech-to-Text Transcriber with Groq Cloud Whisper (<90ms) & local faster-whisper fallback
     """
-    def __init__(self, model_size: str = "small.en", groq_api_key: str = None):
+    def __init__(self, model_size: str = "tiny.en", groq_api_key: str = None):
         self.model_name = model_size
         self.model = None
         self.use_faster_whisper = False
@@ -64,6 +64,8 @@ class ParakeetTranscriber:
         self.groq_cooldown_until = 0.0
         self.last_groq_request_time = 0.0
         self._local_model_loaded = False
+        # Pre-load local faster-whisper model at startup for instant zero-delay STT fallback
+        self._ensure_local_model()
 
     def _ensure_local_model(self):
         if self._local_model_loaded:

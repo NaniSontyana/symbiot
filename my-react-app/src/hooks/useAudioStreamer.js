@@ -212,23 +212,18 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     }
 
     try {
-      let audioConstraints = {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      };
-
+      let stream;
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const audioInputs = devices.filter(d => d.kind === 'audioinput');
-        const activeMic = audioInputs.find(d => d.deviceId === 'default') || audioInputs[0];
-        if (activeMic && activeMic.deviceId) {
-          audioConstraints.deviceId = { ideal: activeMic.deviceId };
-          console.log(`[ASR Streamer] Selected microphone hardware: "${activeMic.label || activeMic.deviceId}"`);
-        }
-      } catch (e) {}
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+        console.log('[ASR Streamer] Available audio input devices:', audioInputs.map(d => `${d.label || 'Unnamed Mic'} (${d.deviceId})`));
+        
+        // Try getting audio stream with default constraints first
+        stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      } catch (e) {
+        console.warn('[ASR Streamer] Standard getUserMedia failed, retrying with raw audio:true constraint:', e);
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
 
       // Force enable all audio tracks
       stream.getAudioTracks().forEach(track => {

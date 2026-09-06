@@ -30,16 +30,16 @@ class VoiceActivityDetector:
 
     def is_speech(self, audio_chunk: bytes) -> bool:
         energy = self.calculate_energy(audio_chunk)
-        dynamic_threshold = max(self.base_energy_threshold, self.noise_floor * 2.2)
+        dynamic_threshold = min(max(self.base_energy_threshold, self.noise_floor * 1.5), 0.00008)
 
         if energy >= dynamic_threshold:
             self.consecutive_silence = 0
             self.has_speech_started = True
             return True
         else:
-            # Adapt background noise floor during silence (exponential moving average)
+            # Adapt background noise floor during silence with upper safety cap
             if not self.has_speech_started and energy > 0:
-                self.noise_floor = 0.95 * self.noise_floor + 0.05 * energy
+                self.noise_floor = min(0.95 * self.noise_floor + 0.05 * energy, self.base_energy_threshold * 1.5)
 
             self.consecutive_silence += 1
             return False
