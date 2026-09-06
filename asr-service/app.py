@@ -55,6 +55,7 @@ async def websocket_transcribe(websocket: WebSocket):
     MAX_BUFFER_SIZE = 16000 * 2 * 10
     active_speaker = "interviewer"
     
+    chunk_counter = 0
     try:
         while True:
             message = await websocket.receive()
@@ -66,6 +67,8 @@ async def websocket_transcribe(websocket: WebSocket):
                 raw_bytes = message["bytes"]
                 if len(raw_bytes) == 0:
                     continue
+
+                chunk_counter += 1
 
                 # Check channel header prefix (0x01 = Interviewer / System, 0x02 = Applicant / Mic)
                 if raw_bytes[0] in (0x01, 0x02):
@@ -83,6 +86,9 @@ async def websocket_transcribe(websocket: WebSocket):
 
                 # Evaluate Voice Activity Detection (VAD) independently per channel
                 has_speech = target_vad.is_speech(chunk_bytes)
+                
+                if chunk_counter % 25 == 0:
+                    logger.info(f"[ASR WS Receiver] Recv chunk #{chunk_counter}: {len(chunk_bytes)} bytes | channel={channel} | has_speech={has_speech} | buf_len={len(target_buffer)}")
                 
                 # Transcribe upon complete utterance pause (min ~0.3s audio / 9600 bytes) OR max speech buffer (~1.0s / 32,000 bytes)
                 should_transcribe = (target_vad.is_utterance_complete() and len(target_buffer) >= 9600) or (len(target_buffer) >= 32000)
