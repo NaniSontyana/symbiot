@@ -253,7 +253,7 @@ class ParakeetTranscriber:
                     audio_np,
                     beam_size=1,
                     language="en",
-                    vad_filter=True,
+                    vad_filter=False,
                     no_speech_threshold=0.5,
                     initial_prompt=technical_prompt,
                     condition_on_previous_text=False
