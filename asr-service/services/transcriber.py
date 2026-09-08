@@ -205,7 +205,8 @@ class ParakeetTranscriber:
             'sous-titrage', 'radio-canada', 'amara.org', 'subtitles by', 'thank you for watching',
             'subscribe to', 'pog.org', 'pyscript', 'psyche', 'shizuk', 'particip', 'mbc',
             'tentical', 'dicenical', 'ssshh', 'captioned by', 'translated by', 'copyright',
-            'all rights reserved', 'next slide', 'go to the next slide', 'the next slide'
+            'all rights reserved', 'next slide', 'go to the next slide', 'the next slide',
+            'we\'ll be able to make sur', 'not sure how to do this', 'make sure'
         ]
         if any(h in lower for h in hallucinations):
             logger.info(f"[ASR Cleaner] Dropped subtitle/slide hallucination: '{text}'")
