@@ -56,7 +56,7 @@ class ParakeetTranscriber:
     """
     Real-Time Speech-to-Text Transcriber with Groq Cloud Whisper (<90ms) & local faster-whisper fallback
     """
-    def __init__(self, model_size: str = "tiny.en", groq_api_key: str = None):
+    def __init__(self, model_size: str = "base.en", groq_api_key: str = None):
         self.model_name = model_size
         self.model = None
         self.use_faster_whisper = False
@@ -211,6 +211,24 @@ class ParakeetTranscriber:
             logger.info(f"[ASR Cleaner] Dropped subtitle hallucination: '{text}'")
             return ""
 
+        # Tech domain phonetic correction map for common Whisper mishearings
+        tech_map = [
+            (r'\bskype\.?js\b', 'React.js'),
+            (r'\bskype\s+js\b', 'React.js'),
+            (r'\bskype\b', 'React'),
+            (r'\bre-act\b', 'React'),
+            (r'\bpg\s*vector\b', 'pgvector'),
+            (r'\bpostgre\s*sql\b', 'PostgreSQL'),
+            (r'\bnode\.?js\b', 'Node.js'),
+            (r'\bnext\.?js\b', 'Next.js'),
+            (r'\bexpress\.?js\b', 'Express.js'),
+            (r'\bvue\.?js\b', 'Vue.js'),
+            (r'\bfast\s*api\b', 'FastAPI'),
+            (r'\bweb\s*socket[s]?\b', 'WebSockets'),
+        ]
+        for pattern, replacement in tech_map:
+            cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+
         return cleaned
 
     def process_audio_buffer(self, audio_bytes: bytes) -> tuple:
@@ -228,7 +246,7 @@ class ParakeetTranscriber:
         samples = np.frombuffer(norm_bytes[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0
         rms_energy = np.sqrt(np.mean(samples ** 2)) if len(samples) > 0 else 0.0
 
-        if rms_energy < 0.00002:
+        if rms_energy < 0.000005:
             return "", "none"
 
         # 3. Try Groq Cloud Whisper (<90ms ultra-low latency)
@@ -245,7 +263,7 @@ class ParakeetTranscriber:
                 audio_np = np.frombuffer(norm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
                 technical_prompt = (
                     "Technical software engineering job interview covering coding, system design, "
-                    "data structures, algorithms, frontend and backend architecture, React, Next.js, Node.js, Express, "
+                    "data structures, algorithms, frontend and backend architecture, React, React.js, Next.js, Node.js, Express.js, "
                     "Python, FastAPI, TypeScript, JavaScript, PostgreSQL, pgvector, HNSW, MongoDB, Redis, WebSockets, REST APIs, "
                     "Microservices, Docker, Kubernetes, CI/CD, Git, GitHub, VAD, ASR, LLM, and Cloud Services."
                 )
@@ -253,6 +271,7 @@ class ParakeetTranscriber:
                     audio_np,
                     beam_size=1,
                     language="en",
+                    temperature=0.0,
                     vad_filter=False,
                     no_speech_threshold=0.5,
                     initial_prompt=technical_prompt,

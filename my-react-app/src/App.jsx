@@ -388,38 +388,47 @@ export default function App() {
   // Smart Speech Accumulator for ASR chunks
   const pendingQuestionRef = useRef('');
   const accumulationTimerRef = useRef(null);
+  const pendingClearTimerRef = useRef(null);
 
   const dispatchAccumulatedQuestion = (text) => {
     if (!text || !text.trim()) return;
     const sanitized = sanitizeQuestionText(text);
     if (!sanitized || !sanitized.trim()) return;
 
-    // Check dangling prepositions/connectors before dispatching
-    const lower = sanitized.toLowerCase().trim();
-    const words = lower.split(/\s+/).filter(Boolean);
-    const hasQuestionMark = sanitized.includes('?');
+    // Strip trailing punctuation before checking dangling prepositions/connectors
+    const unpunct = sanitized.replace(/[?.!;,]+$/g, '').trim();
+    const lowerUnpunct = unpunct.toLowerCase();
+    const wordsUnpunct = lowerUnpunct.split(/\s+/).filter(Boolean);
 
     const danglingConnectors = [
       'and', 'or', 'with', 'for', 'in', 'of', 'to', 'about', 'like', 'such as',
       'between', 'versus', 'compared to', 'using', 'when', 'if', 'how', 'what',
       'why', 'where', 'which', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
       'the', 'a', 'an', 'and then', 'and now', 'so we', 'let us', 'going to',
-      'ahead and', 'we are'
+      'ahead and', 'we are', 'kind of', 'type of', 'sort of'
     ];
 
-    const lastWord = words[words.length - 1] || '';
-    const lastTwoWords = words.slice(-2).join(' ') || '';
+    const lastWord = wordsUnpunct[wordsUnpunct.length - 1] || '';
+    const lastTwoWords = wordsUnpunct.slice(-2).join(' ') || '';
 
-    const isDanglingIncomplete = !hasQuestionMark && (danglingConnectors.includes(lastWord) || danglingConnectors.includes(lastTwoWords));
+    const isDanglingIncomplete = danglingConnectors.includes(lastWord) || danglingConnectors.includes(lastTwoWords);
 
     if (isDanglingIncomplete) {
-      console.log(`[ASR Accumulator] Sentence is dangling/incomplete ("${sanitized}"). Waiting for interviewer to complete question...`);
+      console.log(`[ASR Accumulator] Sentence is dangling/incomplete ("${sanitized}"). Waiting for interviewer to complete phrase...`);
+      if (pendingClearTimerRef.current) clearTimeout(pendingClearTimerRef.current);
+      pendingClearTimerRef.current = setTimeout(() => {
+        console.log(`[ASR Accumulator] Auto-clearing dangling incomplete phrase ("${pendingQuestionRef.current}")`);
+        pendingQuestionRef.current = '';
+      }, 1200);
       return;
     }
 
+    if (pendingClearTimerRef.current) clearTimeout(pendingClearTimerRef.current);
+
     // Final structural validation before sending complete question to LLM
     if (!isInterviewQuestion(sanitized, 'interviewer')) {
-      console.log(`[ASR Accumulator] Incomplete question speech dropped: "${sanitized}"`);
+      console.log(`[ASR Accumulator] Incomplete or non-question speech dropped: "${sanitized}"`);
+      pendingQuestionRef.current = '';
       return;
     }
 

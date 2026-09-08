@@ -293,7 +293,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
         if (audioCtx && audioCtx.state === 'suspended') {
           try {
             await audioCtx.resume();
-            console.log('[ASR Streamer] AudioContext resumed successfully');
+            console.log('[ASR Streamer] AudioContext resumed successfully (state: ' + audioCtx.state + ')');
           } catch (e) {}
         }
       };
@@ -303,17 +303,41 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
         window.addEventListener(evt, resumeAudio, { passive: true });
       });
 
+      // Active auto-resume poll to unblock WebAudio in Electron background windows
+      const resumeInterval = setInterval(() => {
+        if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+          audioCtxRef.current.resume().catch(() => {});
+        } else if (audioCtxRef.current && audioCtxRef.current.state === 'running') {
+          clearInterval(resumeInterval);
+        }
+      }, 400);
+
       if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
         connectAsrSocket();
       }
 
       const source = audioCtx.createMediaStreamSource(stream);
       const muteGain = audioCtx.createGain();
-      muteGain.gain.value = 0.000001; // Inaudible non-zero gain to prevent Chromium WebAudio graph sleeping
+      muteGain.gain.value = 0.001; // Low gain to keep WebAudio engine awake in Chromium/Electron without power-save sleeping
+
+      // Handle OS level microphone mute/unmute events
+      stream.getAudioTracks().forEach(track => {
+        track.onunmute = () => {
+          console.log('[ASR Streamer] Microphone track unmuted by OS, resuming WebAudio graph...');
+          if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+            audioCtxRef.current.resume().catch(() => {});
+          }
+        };
+        track.onmute = () => {
+          console.warn('[ASR Streamer WARNING] Microphone track muted by OS privacy setting!');
+        };
+      });
 
       // Global window references to prevent V8 Garbage Collector from evicting active Web Audio nodes
       window._symbiotAudioCtx = audioCtx;
       window._symbiotStream = stream;
+      window._symbiotSource = source;
+      window._symbiotMuteGain = muteGain;
 
       // Try AudioWorklet first for glitch-free main-thread decoupled audio streaming
       try {
