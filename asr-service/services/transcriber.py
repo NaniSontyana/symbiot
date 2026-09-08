@@ -26,7 +26,7 @@ def normalize_audio(pcm_data: bytes, target_peak: float = 0.85) -> bytes:
         return pcm_data
 
     scale = (32767.0 * target_peak) / max_val
-    scale = min(scale, 4.0)  # Max gain cap of 4x (12dB) to prevent boosting silent noise floors
+    scale = min(scale, 8.0)  # Boost soft microphone input volume (up to 18dB gain)
 
     if scale > 1.05:
         normalized_samples = np.clip(samples * scale, -32768, 32767).astype(np.int16)
@@ -205,10 +205,10 @@ class ParakeetTranscriber:
             'sous-titrage', 'radio-canada', 'amara.org', 'subtitles by', 'thank you for watching',
             'subscribe to', 'pog.org', 'pyscript', 'psyche', 'shizuk', 'particip', 'mbc',
             'tentical', 'dicenical', 'ssshh', 'captioned by', 'translated by', 'copyright',
-            'all rights reserved'
+            'all rights reserved', 'next slide', 'go to the next slide', 'the next slide'
         ]
         if any(h in lower for h in hallucinations):
-            logger.info(f"[ASR Cleaner] Dropped subtitle hallucination: '{text}'")
+            logger.info(f"[ASR Cleaner] Dropped subtitle/slide hallucination: '{text}'")
             return ""
 
         # Tech domain phonetic correction map for common Whisper mishearings
@@ -243,8 +243,8 @@ class ParakeetTranscriber:
         raw_samples = np.frombuffer(audio_bytes[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0
         rms_energy = np.sqrt(np.mean(raw_samples ** 2)) if len(raw_samples) > 0 else 0.0
 
-        # Drop audio buffers below minimum physical speech RMS energy floor (< 0.003 RMS / -50dB)
-        if rms_energy < 0.003:
+        # Drop audio buffers below minimum physical speech RMS energy floor (< 0.0008 RMS / -62dB)
+        if rms_energy < 0.0008:
             return "", "none"
 
         # 2. Normalize audio volume to boost soft microphone inputs
@@ -273,8 +273,8 @@ class ParakeetTranscriber:
                     beam_size=1,
                     language="en",
                     temperature=0.0,
-                    vad_filter=False,
-                    no_speech_threshold=0.5,
+                    vad_filter=True,
+                    no_speech_threshold=0.6,
                     initial_prompt=technical_prompt,
                     condition_on_previous_text=False
                 )
