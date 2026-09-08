@@ -7,7 +7,7 @@ function resampleAndConvertToInt16(float32Array, inRate, outRate = 16000) {
   if (inRate === outRate) {
     const pcm = new Int16Array(float32Array.length);
     for (let i = 0; i < float32Array.length; i++) {
-      const s = Math.max(-1, Math.min(1, float32Array[i] * 5.0));
+      const s = Math.max(-1, Math.min(1, float32Array[i]));
       pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
     }
     return pcm.buffer;
@@ -26,8 +26,7 @@ function resampleAndConvertToInt16(float32Array, inRate, outRate = 16000) {
     const next = float32Array[index + 1] !== undefined ? float32Array[index + 1] : current;
 
     const interpolated = current + (next - current) * decimal;
-    const boosted = interpolated * 5.0; // Boost microphone input volume (14dB gain)
-    const clamped = Math.max(-1, Math.min(1, boosted));
+    const clamped = Math.max(-1, Math.min(1, interpolated));
     result[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
   }
 
@@ -250,8 +249,8 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
                              audioInputs[0];
 
         let audioConstraints = {
-          echoCancellation: false,
-          noiseSuppression: false,
+          echoCancellation: true,
+          noiseSuppression: true,
           autoGainControl: true,
         };
 

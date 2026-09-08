@@ -9,7 +9,8 @@ class PcmProcessor extends AudioWorkletProcessor {
     this.bufferSize = 4096;
     this.buffer = new Float32Array(this.bufferSize);
     this.bufferIndex = 0;
-    
+    this.phase = 0;
+
     this.port.onmessage = (event) => {
       if (event.data.type === 'set_sample_rate') {
         this.targetSampleRate = event.data.sampleRate || 16000;
@@ -48,31 +49,36 @@ class PcmProcessor extends AudioWorkletProcessor {
     const rms = Math.sqrt(sum / float32Chunk.length);
     const level = Math.min(100, Math.floor(rms * 500));
 
-    // Linear Interpolation Resampler: Float32 (inRate) -> Int16 PCM (16000 Hz)
+    // Continuous Linear Interpolation Resampler: Float32 (inRate) -> Int16 PCM (16000 Hz)
     const ratio = inRate / outRate;
-    const newLength = Math.round(float32Chunk.length / ratio);
-    const pcmInt16 = new Int16Array(newLength);
+    const estimatedLength = Math.floor(float32Chunk.length / ratio);
+    const pcmInt16 = new Int16Array(estimatedLength + 10);
+    let outIdx = 0;
 
-    for (let i = 0; i < newLength; i++) {
-      const originPos = i * ratio;
-      const index = Math.floor(originPos);
-      const decimal = originPos - index;
+    while (this.phase < float32Chunk.length - 1) {
+      const index = Math.floor(this.phase);
+      const decimal = this.phase - index;
 
       const current = float32Chunk[index] || 0;
       const next = float32Chunk[index + 1] !== undefined ? float32Chunk[index + 1] : current;
 
       const interpolated = current + (next - current) * decimal;
-      const boosted = interpolated * 5.0; // Boost soft microphone input volume (14dB gain)
-      const clamped = Math.max(-1, Math.min(1, boosted));
-      pcmInt16[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+      const clamped = Math.max(-1, Math.min(1, interpolated));
+      pcmInt16[outIdx++] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+
+      this.phase += ratio;
     }
+
+    this.phase -= float32Chunk.length;
+
+    const finalBuffer = pcmInt16.subarray(0, outIdx);
 
     // Transfer Int16 PCM ArrayBuffer back to main thread
     this.port.postMessage({
       type: 'pcm_data',
-      pcmBuffer: pcmInt16.buffer,
+      pcmBuffer: finalBuffer.buffer,
       audioLevel: level
-    }, [pcmInt16.buffer]);
+    }, [finalBuffer.buffer]);
 
     this.bufferIndex = 0;
   }

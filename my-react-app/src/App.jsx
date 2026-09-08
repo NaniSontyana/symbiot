@@ -471,10 +471,10 @@ export default function App() {
 
         if (accumulationTimerRef.current) clearTimeout(accumulationTimerRef.current);
 
-        // Require a 200ms complete silence pause after speech before dispatching complete question
+        // Require a 500ms complete silence pause after speech before dispatching complete question
         accumulationTimerRef.current = setTimeout(() => {
           dispatchAccumulatedQuestion(pendingQuestionRef.current);
-        }, 200);
+        }, 500);
       }
     }
   );
