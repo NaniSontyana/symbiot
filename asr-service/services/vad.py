@@ -4,7 +4,7 @@ class VoiceActivityDetector:
     """
     Enhanced Voice Activity Detector (VAD) with adaptive noise floor estimation and real-time pause tracking
     """
-    def __init__(self, base_energy_threshold: float = 0.000008, silence_duration_frames: int = 2):
+    def __init__(self, base_energy_threshold: float = 0.00015, silence_duration_frames: int = 4):
         self.base_energy_threshold = base_energy_threshold
         self.silence_duration_frames = silence_duration_frames
         self.consecutive_silence = 0
@@ -30,7 +30,7 @@ class VoiceActivityDetector:
 
     def is_speech(self, audio_chunk: bytes) -> bool:
         energy = self.calculate_energy(audio_chunk)
-        dynamic_threshold = min(max(self.base_energy_threshold, self.noise_floor * 1.5), 0.00008)
+        dynamic_threshold = min(max(self.base_energy_threshold, self.noise_floor * 1.8), 0.001)
 
         if energy >= dynamic_threshold:
             self.consecutive_silence = 0
