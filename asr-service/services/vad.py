@@ -4,7 +4,7 @@ class VoiceActivityDetector:
     """
     Enhanced Voice Activity Detector (VAD) with adaptive noise floor estimation and real-time pause tracking
     """
-    def __init__(self, base_energy_threshold: float = 0.00005, silence_duration_frames: int = 3):
+    def __init__(self, base_energy_threshold: float = 0.000003, silence_duration_frames: int = 2):
         self.base_energy_threshold = base_energy_threshold
         self.silence_duration_frames = silence_duration_frames
         self.consecutive_silence = 0
@@ -15,12 +15,10 @@ class VoiceActivityDetector:
         if not audio_chunk:
             return 0.0
 
-        # Ensure byte length is multiple of 2 for Int16 alignment
         aligned_len = len(audio_chunk) - (len(audio_chunk) % 2)
         if aligned_len == 0:
             return 0.0
 
-        # Convert raw bytes to 16-bit PCM numpy float array normalized to [-1.0, 1.0]
         audio_data = np.frombuffer(audio_chunk[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0
         if len(audio_data) == 0:
             return 0.0
@@ -30,14 +28,13 @@ class VoiceActivityDetector:
 
     def is_speech(self, audio_chunk: bytes) -> bool:
         energy = self.calculate_energy(audio_chunk)
-        dynamic_threshold = min(max(self.base_energy_threshold, self.noise_floor * 1.5), 0.0005)
+        dynamic_threshold = min(max(self.base_energy_threshold, self.noise_floor * 1.3), 0.0002)
 
         if energy >= dynamic_threshold:
             self.consecutive_silence = 0
             self.has_speech_started = True
             return True
         else:
-            # Adapt background noise floor during silence with safety cap
             if not self.has_speech_started and energy > 0:
                 self.noise_floor = min(0.95 * self.noise_floor + 0.05 * energy, self.base_energy_threshold * 0.8)
 

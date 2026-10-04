@@ -239,17 +239,17 @@ class ParakeetTranscriber:
         if not audio_bytes or len(audio_bytes) < 3200:
             return "", "none"
 
-        # 1. Digital Zero & Noise Floor Filter: Calculate RMS energy on raw audio BEFORE normalization
-        aligned_len = len(audio_bytes) - (len(audio_bytes) % 2)
-        raw_samples = np.frombuffer(audio_bytes[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0
-        rms_energy = np.sqrt(np.mean(raw_samples ** 2)) if len(raw_samples) > 0 else 0.0
-
-        # Drop audio buffers below minimum physical speech RMS energy floor (< 0.0008 RMS / -62dB)
-        if rms_energy < 0.0008:
-            return "", "none"
-
-        # 2. Normalize audio volume to boost soft microphone inputs
+        # 1. Normalize audio volume to boost soft microphone inputs up to 18dB
         norm_bytes = normalize_audio(audio_bytes)
+
+        # 2. Digital Zero Filter: Calculate RMS energy after volume boosting
+        aligned_len = len(norm_bytes) - (len(norm_bytes) % 2)
+        samples = np.frombuffer(norm_bytes[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0
+        rms_energy = np.sqrt(np.mean(samples ** 2)) if len(samples) > 0 else 0.0
+
+        # Drop only absolute silence / digital zero buffers (< 0.0001 RMS / -80dB)
+        if rms_energy < 0.0001:
+            return "", "none"
 
         # 3. Try Groq Cloud Whisper (<90ms ultra-low latency)
         if self.groq_api_key:

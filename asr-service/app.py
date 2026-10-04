@@ -91,8 +91,8 @@ async def websocket_transcribe(websocket: WebSocket):
                     chunk_energy = target_vad.calculate_energy(chunk_bytes)
                     logger.info(f"[ASR WS Receiver] Chunk #{chunk_counter}: {len(chunk_bytes)}B | channel={channel} | energy={chunk_energy:.8f} | speech={has_speech} | buf_len={len(target_buffer)}")
                 
-                # Transcribe only when speech has started AND (complete utterance pause OR max ~1.5s speech buffer / 48,000 bytes)
-                should_transcribe = target_vad.has_speech_started and ((target_vad.is_utterance_complete() and len(target_buffer) >= 6400) or (len(target_buffer) >= 48000))
+                # Transcribe when pause detected (utterance complete) OR buffer reaches ~1s of audio (32,000 bytes)
+                should_transcribe = (target_vad.is_utterance_complete() and len(target_buffer) >= 4800) or (len(target_buffer) >= 32000)
 
                 if should_transcribe:
                     res = await asyncio.to_thread(transcriber.process_audio_buffer, bytes(target_buffer))
@@ -112,14 +112,10 @@ async def websocket_transcribe(websocket: WebSocket):
                         target_buffer.clear()
                         target_vad.reset()
                     else:
-                        # Clear processed non-speech/low-RMS buffer once evaluated to prevent re-triggering
-                        if target_vad.is_utterance_complete() or len(target_buffer) >= 48000:
+                        # Clear evaluated buffer to keep latency low
+                        if target_vad.is_utterance_complete() or len(target_buffer) >= 32000:
                             target_buffer.clear()
                             target_vad.reset()
-                else:
-                    # Flush silent room noise buffers cleanly without invoking ASR API if no speech started
-                    if not target_vad.has_speech_started and len(target_buffer) >= 32000:
-                        target_buffer.clear()
             elif "text" in message and message["text"]:
                 try:
                     payload = json.loads(message["text"])

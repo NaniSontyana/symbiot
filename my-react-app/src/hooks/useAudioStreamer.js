@@ -316,6 +316,12 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
       }
 
       const source = audioCtx.createMediaStreamSource(stream);
+
+      // Pre-amp gain boost (3.0x / +10dB) for weak/quiet laptop and headset microphones
+      const inputGain = audioCtx.createGain();
+      inputGain.gain.value = 3.0;
+      source.connect(inputGain);
+
       const muteGain = audioCtx.createGain();
       muteGain.gain.value = 0.001; // Low gain to keep WebAudio engine awake in Chromium/Electron without power-save sleeping
 
@@ -336,6 +342,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
       window._symbiotAudioCtx = audioCtx;
       window._symbiotStream = stream;
       window._symbiotSource = source;
+      window._symbiotInputGain = inputGain;
       window._symbiotMuteGain = muteGain;
 
       // Try AudioWorklet first for glitch-free main-thread decoupled audio streaming
@@ -365,10 +372,10 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
           }
         };
 
-        source.connect(workletNode);
+        inputGain.connect(workletNode);
         workletNode.connect(muteGain);
         muteGain.connect(audioCtx.destination);
-        console.log('[ASR Streamer] AudioWorklet 16kHz resampler active');
+        console.log('[ASR Streamer] AudioWorklet 16kHz resampler active (+10dB input boost)');
       } catch (workletErr) {
         console.warn('[ASR Streamer] AudioWorklet fallback to ScriptProcessor:', workletErr.message);
         const processor = audioCtx.createScriptProcessor(4096, 1, 1);
@@ -402,7 +409,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
           }
         };
 
-        source.connect(processor);
+        inputGain.connect(processor);
         processor.connect(muteGain);
         muteGain.connect(audioCtx.destination);
       }

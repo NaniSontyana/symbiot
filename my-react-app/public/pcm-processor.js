@@ -9,7 +9,6 @@ class PcmProcessor extends AudioWorkletProcessor {
     this.bufferSize = 4096;
     this.buffer = new Float32Array(this.bufferSize);
     this.bufferIndex = 0;
-    this.phase = 0;
 
     this.port.onmessage = (event) => {
       if (event.data.type === 'set_sample_rate') {
@@ -37,9 +36,11 @@ class PcmProcessor extends AudioWorkletProcessor {
   }
 
   flushBuffer() {
+    if (this.bufferIndex === 0) return;
+
     const float32Chunk = this.buffer.subarray(0, this.bufferIndex);
-    const inRate = sampleRate; // Global AudioWorklet sampleRate
-    const outRate = this.targetSampleRate;
+    const inRate = sampleRate; // Global AudioWorklet sampleRate (e.g. 48000 or 44100)
+    const outRate = this.targetSampleRate; // 16000
 
     // Compute RMS audio level for UI visualizers
     let sum = 0;
@@ -49,38 +50,41 @@ class PcmProcessor extends AudioWorkletProcessor {
     const rms = Math.sqrt(sum / float32Chunk.length);
     const level = Math.min(100, Math.floor(rms * 500));
 
-    // Continuous Linear Interpolation Resampler: Float32 (inRate) -> Int16 PCM (16000 Hz)
-    const ratio = inRate / outRate;
-    const estimatedLength = Math.floor(float32Chunk.length / ratio);
-    const pcmInt16 = new Int16Array(estimatedLength + 10);
-    let outIdx = 0;
+    let pcmInt16;
 
-    while (this.phase < float32Chunk.length - 1) {
-      const index = Math.floor(this.phase);
-      const decimal = this.phase - index;
+    if (inRate === outRate) {
+      pcmInt16 = new Int16Array(float32Chunk.length);
+      for (let i = 0; i < float32Chunk.length; i++) {
+        const s = Math.max(-1, Math.min(1, float32Chunk[i]));
+        pcmInt16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+    } else {
+      const ratio = inRate / outRate;
+      const newLength = Math.round(float32Chunk.length / ratio);
+      pcmInt16 = new Int16Array(newLength);
 
-      const current = float32Chunk[index] || 0;
-      const next = float32Chunk[index + 1] !== undefined ? float32Chunk[index + 1] : current;
+      for (let i = 0; i < newLength; i++) {
+        const originPos = i * ratio;
+        const index = Math.floor(originPos);
+        const decimal = originPos - index;
 
-      const interpolated = current + (next - current) * decimal;
-      const clamped = Math.max(-1, Math.min(1, interpolated));
-      pcmInt16[outIdx++] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+        const current = float32Chunk[index] !== undefined ? float32Chunk[index] : 0;
+        const next = (index + 1 < float32Chunk.length) ? float32Chunk[index + 1] : current;
 
-      this.phase += ratio;
+        const interpolated = current + (next - current) * decimal;
+        const clamped = Math.max(-1, Math.min(1, interpolated));
+        pcmInt16[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+      }
     }
 
-    this.phase -= float32Chunk.length;
-
-    const finalBuffer = pcmInt16.subarray(0, outIdx);
+    this.bufferIndex = 0;
 
     // Transfer Int16 PCM ArrayBuffer back to main thread
     this.port.postMessage({
       type: 'pcm_data',
-      pcmBuffer: finalBuffer.buffer,
+      pcmBuffer: pcmInt16.buffer,
       audioLevel: level
-    }, [finalBuffer.buffer]);
-
-    this.bufferIndex = 0;
+    }, [pcmInt16.buffer]);
   }
 }
 
