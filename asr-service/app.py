@@ -20,29 +20,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Read GROQ_API_KEY from backend-gateway/.env if present
-groq_key = (os.getenv("GROQ_API_KEY") or "").strip().strip('"').strip("'")
-if not groq_key and os.path.exists("../backend-gateway/.env"):
-    try:
-        with open("../backend-gateway/.env", "r") as f:
-            for line in f:
-                if line.startswith("GROQ_API_KEY="):
-                    groq_key = line.strip().split("=", 1)[1].strip().strip('"').strip("'")
-                    break
-    except Exception:
-        pass
-
 interviewer_vad = VoiceActivityDetector()
 applicant_vad = VoiceActivityDetector()
-transcriber = ParakeetTranscriber(groq_api_key=groq_key)
+transcriber = ParakeetTranscriber(model_name="nvidia/parakeet-realtime-eou-120m-v1")
 
 @app.get("/health")
 def health_check():
-    has_groq = bool(transcriber.groq_api_key and transcriber.groq_api_key.startswith("gsk_"))
     return {
         "status": "healthy",
         "service": "symbiot-asr-service",
-        "engine": "groq-whisper-v3-turbo (80ms)" if has_groq else getattr(transcriber, "model_name", "local-whisper")
+        "engine": getattr(transcriber, "engine_type", "parakeet-realtime-eou-120m-v1")
     }
 
 @app.websocket("/ws/transcribe")
@@ -95,8 +82,8 @@ async def websocket_transcribe(websocket: WebSocket):
                 should_transcribe = (target_vad.is_utterance_complete() and len(target_buffer) >= 4800) or (len(target_buffer) >= 32000)
 
                 if should_transcribe:
-                    res = await asyncio.to_thread(transcriber.process_audio_buffer, bytes(target_buffer))
-                    transcript_text, engine_used = res if isinstance(res, tuple) else (res, "whisper")
+                    res = await asyncio.to_thread(transcriber.process_audio_buffer, bytes(target_buffer), channel)
+                    transcript_text, engine_used = res if isinstance(res, tuple) else (res, "parakeet-realtime-eou-120m-v1")
                     if transcript_text:
                         logger.info(f"[ASR WS] Transcribed [{channel}] [{engine_used}]: '{transcript_text}'")
                         try:

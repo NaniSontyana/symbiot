@@ -1,11 +1,9 @@
 import os
-import time
 import struct
-import io
 import logging
 import numpy as np
-import urllib.request
-import json
+from typing import Tuple
+from services.parakeet_eou_engine import ParakeetEOUEngine
 
 logger = logging.getLogger("asr_transcriber")
 
@@ -26,7 +24,7 @@ def normalize_audio(pcm_data: bytes, target_peak: float = 0.85) -> bytes:
         return pcm_data
 
     scale = (32767.0 * target_peak) / max_val
-    scale = min(scale, 8.0)  # Boost soft microphone input volume (up to 18dB gain)
+    scale = min(scale, 8.0)
 
     if scale > 1.05:
         normalized_samples = np.clip(samples * scale, -32768, 32767).astype(np.int16)
@@ -42,7 +40,6 @@ def pcm_to_wav(pcm_data: bytes, sample_rate: int = 16000, num_channels: int = 1,
     data_size = len(pcm_data)
     chunk_size = 36 + data_size
 
-    # WAV header binary format
     header = struct.pack(
         '<4sI4s4sIHHIIHH4sI',
         b'RIFF', chunk_size, b'WAVE',
@@ -54,236 +51,28 @@ def pcm_to_wav(pcm_data: bytes, sample_rate: int = 16000, num_channels: int = 1,
 
 class ParakeetTranscriber:
     """
-    Real-Time Speech-to-Text Transcriber with Groq Cloud Whisper (<90ms) & local faster-whisper fallback
+    NVIDIA Parakeet Realtime EOU 120M (`parakeet_realtime_eou_120m-v1`) Main Transcriber Wrapper.
     """
-    def __init__(self, model_size: str = "base.en", groq_api_key: str = None):
-        self.model_name = model_size
-        self.model = None
-        self.use_faster_whisper = False
-        self.groq_api_key = (groq_api_key or os.getenv("GROQ_API_KEY") or "").strip().strip('"').strip("'")
-        self.groq_cooldown_until = 0.0
-        self.last_groq_request_time = 0.0
-        self._local_model_loaded = False
-        # Pre-load local faster-whisper model at startup for instant zero-delay STT fallback
-        self._ensure_local_model()
-
-    def _ensure_local_model(self):
-        if self._local_model_loaded:
-            return
-        self._local_model_loaded = True
-        try:
-            from faster_whisper import WhisperModel
-            logger.info(f"Loading local faster-whisper model '{self.model_name}' on CPU (int8)...")
-            self.model = WhisperModel(self.model_name, device="cpu", compute_type="int8")
-            self.use_faster_whisper = True
-            logger.info("Local faster-whisper STT engine initialized successfully")
-        except Exception as e:
-            logger.warning(f"faster-whisper local model load skipped/failed ({e}).")
-
-    def transcribe_groq_cloud(self, audio_bytes: bytes) -> str:
-        """
-        Transcribes audio buffer via Groq Cloud Whisper API (whisper-large-v3-turbo) in ~80ms
-        """
-        if not self.groq_api_key or not self.groq_api_key.startswith("gsk_"):
-            return ""
-
-        # Check if rate-limited (HTTP 429 cooldown) or within 200ms spacing window
-        now = time.time()
-        if now < self.groq_cooldown_until or (now - self.last_groq_request_time) < 0.2:
-            return ""
-
-        self.last_groq_request_time = now
-
-        try:
-            norm_audio = normalize_audio(audio_bytes)
-            wav_bytes = pcm_to_wav(norm_audio)
-            boundary = '----WebKitFormBoundary7MA4YWxkTrZu0gW'
-            
-            body = bytearray()
-            # 1. Add model parameter
-            body.extend(f'--{boundary}\r\n'.encode('utf-8'))
-            body.extend(b'Content-Disposition: form-data; name="model"\r\n\r\n')
-            body.extend(b'whisper-large-v3-turbo\r\n')
-
-            # 2. Add language parameter
-            body.extend(f'--{boundary}\r\n'.encode('utf-8'))
-            body.extend(b'Content-Disposition: form-data; name="language"\r\n\r\n')
-            body.extend(b'en\r\n')
-
-            # 3. Add temperature=0.0 parameter for deterministic accuracy
-            body.extend(f'--{boundary}\r\n'.encode('utf-8'))
-            body.extend(b'Content-Disposition: form-data; name="temperature"\r\n\r\n')
-            body.extend(b'0.0\r\n')
-
-            # 4. Add response_format=json parameter
-            body.extend(f'--{boundary}\r\n'.encode('utf-8'))
-            body.extend(b'Content-Disposition: form-data; name="response_format"\r\n\r\n')
-            body.extend(b'json\r\n')
-
-            # 5. Domain-specific context prompt for Whisper to accurately recognize technical vocabulary
-            clean_prompt = (
-                "Technical software engineering job interview discussion covering coding, system design, "
-                "data structures, algorithms, frontend and backend architecture, React, Next.js, Node.js, Express, "
-                "Python, FastAPI, TypeScript, JavaScript, PostgreSQL, MongoDB, Redis, WebSockets, REST APIs, "
-                "Microservices, Docker, Kubernetes, CI/CD, Git, GitHub, VAD, ASR, LLM, and Cloud Services."
-            )
-            body.extend(f'--{boundary}\r\n'.encode('utf-8'))
-            body.extend(b'Content-Disposition: form-data; name="prompt"\r\n\r\n')
-            body.extend(clean_prompt.encode('utf-8'))
-            body.extend(b'\r\n')
-
-            # 6. Add audio file payload
-            body.extend(f'--{boundary}\r\n'.encode('utf-8'))
-            body.extend(b'Content-Disposition: form-data; name="file"; filename="audio.wav"\r\n')
-            body.extend(b'Content-Type: audio/wav\r\n\r\n')
-            body.extend(wav_bytes)
-            body.extend(b'\r\n')
-            body.extend(f'--{boundary}--\r\n'.encode('utf-8'))
-
-            req = urllib.request.Request(
-                "https://api.groq.com/openai/v1/audio/transcriptions",
-                data=bytes(body),
-                headers={
-                    "Authorization": f"Bearer {self.groq_api_key}",
-                    "Content-Type": f"multipart/form-data; boundary={boundary}",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                },
-                method="POST"
-            )
-
-            with urllib.request.urlopen(req, timeout=3.5) as response:
-                res_data = json.loads(response.read().decode('utf-8'))
-                transcript = res_data.get("text", "").strip()
-                if transcript:
-                    logger.info(f"[Groq Cloud STT ⚡ 80ms]: '{transcript}'")
-                return transcript
-        except Exception as err:
-            err_str = str(err)
-            if "403" in err_str or "401" in err_str:
-                logger.error(f"[Groq Cloud STT] Invalid or expired Groq API key ({err_str}). Disabling Groq Cloud STT and switching to local faster-whisper.")
-                self.groq_api_key = None
-            elif "429" in err_str:
-                self.groq_cooldown_until = time.time() + 6.0
-                logger.warning(f"[Groq Cloud STT] Rate limit (HTTP 429). Cooldown 6s activated, using local fallback.")
-            else:
-                logger.warning(f"[Groq Cloud STT] Error/fallback: {err}")
-            return ""
-
-    def clean_hallucination(self, text: str) -> str:
-        if not text:
-            return ""
-        
-        import re
-        # Remove bracketed text like [music], (applause), [silence], (coughing)
-        cleaned = re.sub(r'\[.*?\]|\(.*?\)', '', text).strip()
-        if not cleaned:
-            return ""
-
-        # Deduplicate consecutive repeated words or phrases (e.g. "React React React" -> "React")
-        cleaned = re.sub(r'\b(\w+)(?:\s+\1){2,}\b', r'\1', cleaned, flags=re.IGNORECASE)
-
-        lower = cleaned.lower().strip()
-        lower_clean = lower.strip(" .!?,;:")
-
-        # Standalone silence & low-audio hallucinations common in Whisper
-        standalone_hallucinations = {
-            'thank you', 'you', 'thanks', 'thank you for watching', 'thanks for watching',
-            'thank you very much', 'subtitles by amara.org', 'bye', 'goodbye', 'hello',
-            'thank you.', 'you.', 'listening', 'listening...', 'silence', 'music',
-            'the end', 'subscribe', 'like and subscribe', 'subscribe to the channel',
-            'so', 'yeah', 'uh', 'um', 'oh', 'what', 'ok', 'okay', 'right', 'alright',
-            'see you', 'see ya', 'take care', 'good job', 'great job', 'testing',
-            'can you hear me', 'can you see my screen', 'audio check',
-            "so, let's go.", "so, let's go", "so let's go.", "so let's go",
-            "let's go.", "let's go", "love you", "love you!", "love you."
+    def __init__(self, model_name: str = "nvidia/parakeet-realtime-eou-120m-v1"):
+        self.model_name = model_name
+        self.engine_type = "parakeet-realtime-eou-120m-v1"
+        self.eou_engine = ParakeetEOUEngine(model_name=model_name, device="cpu")
+        self._speaker_states = {
+            "interviewer": self.eou_engine.create_stream_state(),
+            "applicant": self.eou_engine.create_stream_state()
         }
-        if lower_clean in standalone_hallucinations or len(lower_clean) <= 1:
-            logger.info(f"[ASR Cleaner] Dropped noise/standalone hallucination: '{text}'")
-            return ""
 
-        hallucinations = [
-            'sous-titrage', 'radio-canada', 'amara.org', 'subtitles by', 'thank you for watching',
-            'subscribe to', 'pog.org', 'pyscript', 'psyche', 'shizuk', 'particip', 'mbc',
-            'tentical', 'dicenical', 'ssshh', 'captioned by', 'translated by', 'copyright',
-            'all rights reserved', 'next slide', 'go to the next slide', 'the next slide',
-            'we\'ll be able to make sur', 'not sure how to do this', 'make sure'
-        ]
-        if any(h in lower for h in hallucinations):
-            logger.info(f"[ASR Cleaner] Dropped subtitle/slide hallucination: '{text}'")
-            return ""
-
-        # Tech domain phonetic correction map for common Whisper mishearings
-        tech_map = [
-            (r'\bskype\.?js\b', 'React.js'),
-            (r'\bskype\s+js\b', 'React.js'),
-            (r'\bskype\b', 'React'),
-            (r'\bre-act\b', 'React'),
-            (r'\bpg\s*vector\b', 'pgvector'),
-            (r'\bpostgre\s*sql\b', 'PostgreSQL'),
-            (r'\bnode\.?js\b', 'Node.js'),
-            (r'\bnext\.?js\b', 'Next.js'),
-            (r'\bexpress\.?js\b', 'Express.js'),
-            (r'\bvue\.?js\b', 'Vue.js'),
-            (r'\bfast\s*api\b', 'FastAPI'),
-            (r'\bweb\s*socket[s]?\b', 'WebSockets'),
-        ]
-        for pattern, replacement in tech_map:
-            cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
-
-        return cleaned
-
-    def process_audio_buffer(self, audio_bytes: bytes) -> tuple:
+    def process_audio_buffer(self, audio_bytes: bytes, speaker: str = "applicant") -> Tuple[str, str]:
         """
-        Processes streaming audio Int16 PCM buffer into (transcript_text, engine_name)
+        Processes Int16 PCM streaming audio buffer using NVIDIA Parakeet Realtime EOU 120M CPU engine.
+        
+        Returns:
+            Tuple[transcript_text, engine_name]
         """
         if not audio_bytes or len(audio_bytes) < 3200:
-            return "", "none"
+            return "", self.engine_type
 
-        # 1. Normalize audio volume to boost soft microphone inputs up to 18dB
-        norm_bytes = normalize_audio(audio_bytes)
+        speaker_state = self._speaker_states.get(speaker, self._speaker_states["applicant"])
+        transcript, is_eou, engine_used = self.eou_engine.process_chunk(audio_bytes, speaker_state)
 
-        # 2. Digital Zero Filter: Calculate RMS energy after volume boosting
-        aligned_len = len(norm_bytes) - (len(norm_bytes) % 2)
-        samples = np.frombuffer(norm_bytes[:aligned_len], dtype=np.int16).astype(np.float32) / 32768.0
-        rms_energy = np.sqrt(np.mean(samples ** 2)) if len(samples) > 0 else 0.0
-
-        # Drop only absolute silence / digital zero buffers (< 0.0001 RMS / -80dB)
-        if rms_energy < 0.0001:
-            return "", "none"
-
-        # 3. Try Groq Cloud Whisper (<90ms ultra-low latency)
-        if self.groq_api_key:
-            groq_text = self.transcribe_groq_cloud(norm_bytes)
-            clean_text = self.clean_hallucination(groq_text)
-            if clean_text:
-                return clean_text, "groq-whisper-v3-turbo"
-
-        # 4. Local Faster-Whisper Fallback
-        self._ensure_local_model()
-        if self.use_faster_whisper and self.model:
-            try:
-                audio_np = np.frombuffer(norm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-                technical_prompt = (
-                    "Technical software engineering job interview covering coding, system design, "
-                    "data structures, algorithms, frontend and backend architecture, React, React.js, Next.js, Node.js, Express.js, "
-                    "Python, FastAPI, TypeScript, JavaScript, PostgreSQL, pgvector, HNSW, MongoDB, Redis, WebSockets, REST APIs, "
-                    "Microservices, Docker, Kubernetes, CI/CD, Git, GitHub, VAD, ASR, LLM, and Cloud Services."
-                )
-                segments, _ = self.model.transcribe(
-                    audio_np,
-                    beam_size=1,
-                    language="en",
-                    temperature=0.0,
-                    vad_filter=True,
-                    no_speech_threshold=0.6,
-                    initial_prompt=technical_prompt,
-                    condition_on_previous_text=False
-                )
-                text = " ".join([segment.text for segment in segments]).strip()
-                clean_text = self.clean_hallucination(text)
-                if clean_text:
-                    return clean_text, "local-faster-whisper"
-            except Exception as e:
-                logger.error(f"[Local Whisper Engine Error]: {e}")
-
-        return "", "none"
+        return transcript, engine_used
