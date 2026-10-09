@@ -25,7 +25,25 @@ class ParakeetEOUEngine:
         Loads the Parakeet Realtime EOU 120M model on CPU.
         First attempts NeMo toolkit; if NeMo is omitted, prepares ONNX Runtime CPU session.
         """
-        # 1. Try loading via NeMo ASR Toolkit
+        # 1. NeMo ASR Model Loader (NVIDIA NGC / Hugging Face)
+        try:
+            import torch
+            import nemo.collections.asr as nemo_asr
+            # Primary NGC NeMo model name for Parakeet Realtime EOU
+            nemo_id = "stt_en_fastconformer_hybrid_large_streaming_eou"
+            logger.info(f"[Parakeet EOU 120M] Loading NeMo model '{nemo_id}' on CPU...")
+            self.model = nemo_asr.models.EncDecRNNTBPEModel.from_pretrained(
+                model_name=nemo_id,
+                map_location=torch.device(self.device_name)
+            )
+            self.model.eval()
+            self.model.freeze()
+            self.is_ready = True
+            logger.info("[Parakeet EOU 120M] Loaded successfully via NeMo ASR on CPU.")
+            return
+        except Exception as nemo_err:
+            logger.info(f"[Parakeet EOU 120M] NeMo direct load note: {nemo_err}")
+
         try:
             import torch
             import nemo.collections.asr as nemo_asr
