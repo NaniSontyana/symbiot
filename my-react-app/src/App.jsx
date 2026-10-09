@@ -447,6 +447,7 @@ export default function App() {
     isSystemAudioActive,
     startSystemAudioShare,
     stopSystemAudioShare,
+    isSwitchingMic,
     liveTranscript,
     audioLevel,
     micError,
@@ -694,6 +695,7 @@ export default function App() {
               audioDevices={audioDevices}
               selectedMicId={selectedMicId}
               onSwitchMicrophone={switchMicrophone}
+              isSwitchingMic={isSwitchingMic}
             />
           </div>
 

@@ -39,6 +39,7 @@ function resampleAndConvertToInt16(float32Array, inRate, outRate = 16000) {
 export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isSystemAudioActive, setIsSystemAudioActive] = useState(false);
+  const [isSwitchingMic, setIsSwitchingMic] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState('');
   const [audioLevel, setAudioLevel] = useState(0);
   const [micError, setMicError] = useState(null);
@@ -533,8 +534,8 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     console.log('[ASR Streamer] System audio share stopped');
   };
 
-  // Stop audio streaming
-  const stopStreaming = () => {
+  // Stop audio streaming (async to properly await AudioContext.close())
+  const stopStreaming = async () => {
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch (e) {}
       recognitionRef.current = null;
@@ -544,7 +545,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
       processorRef.current = null;
     }
     if (audioCtxRef.current) {
-      try { audioCtxRef.current.close(); } catch (e) {}
+      try { await audioCtxRef.current.close(); } catch (e) {}
       audioCtxRef.current = null;
     }
     if (mediaStreamRef.current) {
@@ -578,13 +579,21 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
   };
 
   const switchMicrophone = async (deviceId) => {
+    if (isSwitchingMic) return; // Prevent overlapping switches
     console.log(`[ASR Streamer] Switching microphone device to: ${deviceId}`);
     setSelectedMicId(deviceId);
     if (isStreaming) {
-      stopStreaming();
-      setTimeout(() => {
-        startStreaming(deviceId);
-      }, 150);
+      setIsSwitchingMic(true);
+      try {
+        await stopStreaming();
+        await startStreaming(deviceId);
+        console.log(`[ASR Streamer] Microphone switch complete: ${deviceId}`);
+      } catch (err) {
+        console.error('[ASR Streamer] Microphone switch failed:', err);
+        setMicError('Microphone switch failed. Please try again.');
+      } finally {
+        setIsSwitchingMic(false);
+      }
     }
   };
 
@@ -595,6 +604,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     isSystemAudioActive,
     startSystemAudioShare,
     stopSystemAudioShare,
+    isSwitchingMic,
     liveTranscript,
     audioLevel,
     micError,
