@@ -16,7 +16,8 @@ function AudioVisualizer({
   onSwitchSpeaker,
   audioDevices = [],
   selectedMicId = '',
-  onSwitchMicrophone
+  onSwitchMicrophone,
+  isSwitchingMic = false
 }) {
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [showOpacitySlider, setShowOpacitySlider] = useState(false);
@@ -49,22 +50,24 @@ function AudioVisualizer({
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
         <button
           onClick={onToggleMic}
+          disabled={isSwitchingMic}
           style={{
             width: '36px',
             height: '36px',
             borderRadius: '50%',
             border: 'none',
-            background: isStreaming ? '#ffffff' : '#171717',
+            background: isSwitchingMic ? '#333333' : isStreaming ? '#ffffff' : '#171717',
             color: isStreaming ? '#000000' : '#ffffff',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            cursor: 'pointer',
-            boxShadow: isStreaming ? '0 0 14px rgba(255, 255, 255, 0.4)' : 'none',
+            cursor: isSwitchingMic ? 'wait' : 'pointer',
+            boxShadow: isStreaming && !isSwitchingMic ? '0 0 14px rgba(255, 255, 255, 0.4)' : 'none',
             transition: 'all 0.2s ease',
-            flexShrink: 0
+            flexShrink: 0,
+            opacity: isSwitchingMic ? 0.6 : 1
           }}
-          title={isStreaming ? "Microphone ON (Click to mute)" : "Microphone OFF (Click to turn ON)"}
+          title={isSwitchingMic ? 'Switching microphone…' : isStreaming ? "Microphone ON (Click to mute)" : "Microphone OFF (Click to turn ON)"}
         >
           {isStreaming ? <Mic size={18} color="#000000" /> : <MicOff size={16} color="#ffffff" />}
         </button>
@@ -72,23 +75,26 @@ function AudioVisualizer({
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#ffffff' }}>
-              {isStreaming ? 'Microphone LIVE' : 'Mic Off'}
+              {isSwitchingMic ? 'Switching Mic…' : isStreaming ? 'Microphone LIVE' : 'Mic Off'}
             </span>
             {audioDevices.length > 1 && (
               <select
                 value={selectedMicId}
                 onChange={(e) => onSwitchMicrophone && onSwitchMicrophone(e.target.value)}
+                disabled={isSwitchingMic}
                 style={{
                   padding: '2px 6px',
                   fontSize: '0.68rem',
                   fontWeight: 600,
                   borderRadius: '6px',
-                  border: '1px solid #404040',
+                  border: isSwitchingMic ? '1px solid #ffffff' : '1px solid #404040',
                   color: '#ffffff',
-                  background: '#171717',
-                  cursor: 'pointer',
+                  background: isSwitchingMic ? '#262626' : '#171717',
+                  cursor: isSwitchingMic ? 'wait' : 'pointer',
                   outline: 'none',
-                  maxWidth: '130px'
+                  maxWidth: '160px',
+                  opacity: isSwitchingMic ? 0.5 : 1,
+                  transition: 'all 0.2s ease'
                 }}
                 title="Select Microphone Hardware Device"
               >
@@ -99,7 +105,23 @@ function AudioVisualizer({
                 ))}
               </select>
             )}
-            {isStreaming && (
+            {isSwitchingMic && (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#171717', padding: '2px 10px', borderRadius: '10px', border: '1px solid #525252' }}>
+                <span
+                  style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    background: '#ffffff',
+                    animation: 'pulse 0.8s ease-in-out infinite alternate'
+                  }}
+                />
+                <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#ffffff' }}>
+                  SWITCHING…
+                </span>
+              </div>
+            )}
+            {!isSwitchingMic && isStreaming && (
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#171717', padding: '2px 8px', borderRadius: '10px', border: '1px solid #404040' }}>
                 {/* 5-Bar Live Animated Audio Signal Level Meter */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '2px', height: '12px' }}>
