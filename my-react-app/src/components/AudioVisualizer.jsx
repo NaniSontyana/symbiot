@@ -2,6 +2,26 @@ import React, { useState } from 'react';
 import { GEMINI_MODELS } from '../lib/models';
 import { Mic, MicOff, Radio, Bot, Eye, ChevronDown, Volume2, User } from 'lucide-react';
 
+const chipStyle = (active) => ({
+  padding: '4px 10px',
+  fontSize: '0.72rem',
+  fontWeight: active ? 700 : 600,
+  borderRadius: '6px',
+  border: active ? '1px solid #ffffff' : '1px solid #262626',
+  background: active ? '#ffffff' : '#0a0a0a',
+  color: active ? '#000000' : '#a3a3a3',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '4px',
+});
+
+const DIAR_STATUS_TEXT = {
+  ready: 'Separate the two voices automatically (one microphone)',
+  loading: 'Voice separation model is loading…',
+  error: 'Voice separation model failed to load (see asr-service /health)',
+  too_slow: 'This computer is too slow for live voice separation (a GPU helps). Using the manual toggle.',
+};
+
 function AudioVisualizer({
   isStreaming,
   onToggleMic,
@@ -17,6 +37,10 @@ function AudioVisualizer({
   onSwitchSpeaker,
   isSystemAudioActive = false,
   asrStatus = null,
+  speakerMode = 'auto',
+  onChangeSpeakerMode,
+  diarStatus = null,
+  onAssignLastSpeaker,
   audioDevices = [],
   selectedMicId = '',
   onSwitchMicrophone,
@@ -26,6 +50,9 @@ function AudioVisualizer({
   const [showOpacitySlider, setShowOpacitySlider] = useState(false);
 
   const opacityPresets = [0.35, 0.6, 0.85, 1.0];
+
+  // Voice separation is used in mic-only mode when chosen and the service's diarizer is ready
+  const autoSeparation = !isSystemAudioActive && speakerMode === 'auto' && diarStatus === 'ready';
 
   const modelList = [
     ...GEMINI_MODELS,
@@ -163,20 +190,56 @@ function AudioVisualizer({
         </div>
       </div>
 
-      {/* 2. Middle: Speaker segregation (automatic with system audio, manual toggle in mic-only mode) */}
+      {/* 2. Middle: Speaker segregation
+          - system audio shared: by source (system audio = interviewer, mic = you)
+          - mic only + Auto:     by voice (Streaming Sortformer diarization in asr-service)
+          - mic only + Manual:   speaker toggle */}
       {isSystemAudioActive ? (
         <div
           style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
           title="Automatic speaker separation: system audio (meeting app) is the interviewer and is answered by the AI; your microphone is you and is never sent to the AI."
         >
-          <span style={{ padding: '4px 10px', fontSize: '0.72rem', fontWeight: 700, borderRadius: '6px', border: '1px solid #ffffff', background: '#ffffff', color: '#000000', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <span style={chipStyle(true)}>
             <Volume2 size={12} color="#000000" />
             <span>Interviewer · System audio</span>
           </span>
-          <span style={{ padding: '4px 10px', fontSize: '0.72rem', fontWeight: 600, borderRadius: '6px', border: '1px solid #262626', background: '#0a0a0a', color: '#a3a3a3', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <span style={chipStyle(false)}>
             <User size={12} color="#a3a3a3" />
             <span>You · Mic</span>
           </span>
+        </div>
+      ) : autoSeparation ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span
+            style={chipStyle(true)}
+            title="One microphone, two voices: speech is separated by voice. Only the interviewer's questions are sent to the AI."
+          >
+            <Radio size={12} color="#000000" />
+            <span>Auto · by voice</span>
+          </span>
+          <button
+            onClick={() => onAssignLastSpeaker && onAssignLastSpeaker('applicant')}
+            style={{ ...chipStyle(false), cursor: 'pointer' }}
+            title="The last line was you, not the interviewer: remember this voice as yours"
+          >
+            <User size={12} color="#a3a3a3" />
+            <span>That was me</span>
+          </button>
+          <button
+            onClick={() => onAssignLastSpeaker && onAssignLastSpeaker('interviewer')}
+            style={{ ...chipStyle(false), cursor: 'pointer' }}
+            title="The last line was the interviewer: remember this voice as the interviewer"
+          >
+            <Volume2 size={12} color="#a3a3a3" />
+            <span>That was interviewer</span>
+          </button>
+          <button
+            onClick={() => onChangeSpeakerMode && onChangeSpeakerMode('manual')}
+            style={{ ...chipStyle(false), cursor: 'pointer', padding: '4px 8px' }}
+            title="Switch to the manual speaker toggle"
+          >
+            Manual
+          </button>
         </div>
       ) : (
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -221,6 +284,18 @@ function AudioVisualizer({
           <User size={12} color={activeSpeaker === 'applicant' ? '#000000' : '#a3a3a3'} />
           <span>2. Candidate Answering</span>
         </button>
+
+        {diarStatus && diarStatus !== 'disabled' && (
+          <button
+            onClick={() => onChangeSpeakerMode && onChangeSpeakerMode('auto')}
+            disabled={diarStatus !== 'ready'}
+            style={{ ...chipStyle(false), cursor: diarStatus === 'ready' ? 'pointer' : 'not-allowed', opacity: diarStatus === 'ready' ? 1 : 0.6, padding: '4px 8px' }}
+            title={DIAR_STATUS_TEXT[diarStatus] || 'Separate the two voices automatically'}
+          >
+            <Radio size={12} color="#a3a3a3" />
+            <span>{diarStatus === 'loading' ? 'Auto (loading…)' : 'Auto'}</span>
+          </button>
+        )}
       </div>
       )}
 

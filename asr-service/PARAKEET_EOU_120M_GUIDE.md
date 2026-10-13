@@ -64,17 +64,22 @@ This mirrors NVIDIA's reference implementation (`nemo/agents/voice_agent/pipecat
 ## 4. WebSocket protocol (`ws://<host>:8000/ws/transcribe`)
 
 **Client → server**
-- Binary: Int16 LE 16 kHz mono PCM, any packet size, optionally prefixed with `0x01` (interviewer) or `0x02` (applicant). Without a prefix, the channel chosen by `set_speaker` is used.
+- Binary: Int16 LE 16 kHz mono PCM, any packet size, optionally prefixed with `0x01` (interviewer), `0x02` (applicant) or `0x03` (mixed: one mic hears both people, so speakers are separated by voice; see section 7). Without a prefix, the channel chosen by `set_speaker` is used.
 - `{"type": "set_speaker", "speaker": "interviewer" | "applicant"}`
 - `{"type": "reset_buffer"}`: drop all audio, text and model state for this connection.
 - `{"type": "flush"}`: finalise any pending text immediately.
+- `{"type": "assign_last_speaker", "role": "applicant" | "interviewer"}`: correct the voice → role mapping using the most recent utterance ("That was me"). Also available: `assign_speaker` (with `speaker_index`) and `set_first_speaker`.
 
 **Server → client**
 ```jsonc
-{"type": "asr_status", "status": "loading" | "ready" | "error", "message": null}
+{"type": "asr_status", "status": "loading" | "ready" | "error", "message": null,
+ "diarization": "loading" | "ready" | "error" | "disabled" | "too_slow", "diarization_message": null}
+{"type": "diar_roles", "applicant_speaker": 1, "first_speaker": "interviewer"}
 {"type": "transcript_partial", "text": "what is a", "speaker": "interviewer", "engine": "parakeet_realtime_eou_120m-v1", "is_final": false, "reason": "partial"}
 {"type": "transcript_chunk",   "text": "what is a closure", "speaker": "interviewer", "engine": "parakeet_realtime_eou_120m-v1", "is_final": true, "reason": "eou"}
 ```
+On the `0x03` channel, transcripts also carry `"speaker_index"` (voice slot 0-3) and `"diarized": true`, and a final can have `reason: "speaker_change"`.
+
 `transcript_chunk` is the message `my-react-app` consumes, sent once per utterance. Clients can ignore `transcript_partial` safely. Audio received while the model is still loading is dropped.
 
 ## 5. Setup
@@ -100,6 +105,14 @@ curl localhost:8000/health
 | `ASR_INPUT_GAIN` | `1.0` | Fixed linear gain applied before the model |
 | `ASR_VAD_ENERGY_THRESHOLD` | `0.000003` | Energy threshold for the idle gate |
 | `ASR_EMIT_PARTIALS` | `1` | Set `0` to send only final transcripts |
+| `ASR_ECHO_GUARD` | `1` | Drop mic transcripts that repeat the interviewer's system audio (speaker bleed) |
+| `ASR_DIARIZATION` | `1` | Set `0` to skip loading the voice-separation model (mic-only auto mode) |
+| `ASR_DIAR_MODEL` | `nvidia/diar_streaming_sortformer_4spk-v2.1` | Hugging Face ID or local `.nemo` path |
+| `ASR_DIAR_CHUNK_LEN` | `auto` | Diarization chunk in 80 ms frames (`6` = 0.48 s). `auto` benchmarks at start-up |
+| `ASR_DIAR_RIGHT_CONTEXT` | `7` | Look-ahead frames (0.56 s). Latency = (chunk + right context) × 80 ms |
+| `ASR_DIAR_FIRST_SPEAKER` | `interviewer` | Role of the first voice heard; the user can correct it live |
+| `ASR_DIAR_THRESHOLD` | `0.5` | Speaker activity threshold |
+| `ASR_DIAR_MIN_SWITCH_SECS` | `0.4` | How long a new voice must hold before an utterance is split |
 | `PORT` | `8000` | Listen port |
 
 The server logs the real-time factor every 200 packets. It must stay below 1.0, i.e. each 80 ms step must take under 80 ms. On CPU, this is the number to watch when several channels are streaming at once.
@@ -118,3 +131,37 @@ pytest tests
   - encoder outputs and tokens equal NeMo's own cache-aware streaming loop,
   - `<EOU>` is detected,
   - concurrent streams don't interfere.
+- `tests/test_speaker_attribution.py`: word → speaker attribution, splitting an utterance when the voice changes without a pause, holding finals until diarization catches up, backchannel merging, role corrections, threaded worker, too-slow fallback.
+- `tests/test_diar_engine_nemo.py`: runs only when NeMo is installed. It builds a tiny Streaming Sortformer with the real architecture and checks that streamed speaker probabilities equal NeMo's `forward_streaming()` (including speaker-cache / FIFO updates past 30 s) and that streams are independent.
+
+## 7. Mic-only speaker separation (Streaming Sortformer)
+
+With **Share system audio**, the speaker is known from the audio source. With **only a microphone** (interviewer on laptop speakers, or in the same room), both voices arrive on one channel. The frontend then sends the mic on channel `0x03` ("Auto · by voice"), and the service separates the voices with [`nvidia/diar_streaming_sortformer_4spk-v2.1`](https://huggingface.co/nvidia/diar_streaming_sortformer_4spk-v2.1).
+
+```text
+mic ─0x03─► ChannelTranscriber (Parakeet EOU) ── words + decode time ──┐
+       └──► SortformerDiarEngine (worker thread) ── speaker / 80 ms ──┴─► DiarizedTranscriber ─► labelled transcripts
+```
+
+- **Engine** (`services/sortformer_diar_engine.py`): NeMo's `forward_streaming_step` with speaker cache 188 + FIFO 188 frames. Each chunk's mel features are computed from raw audio with a margin, so the output is bit-exact with NeMo's offline streaming loop (see the test).
+- **Attribution** (`services/speaker_attribution.py`):
+  - every word gets the dominant voice around the time it was spoken;
+  - if the candidate starts answering without a pause, the utterance is split at that word and the question is finalised at once (`reason: "speaker_change"`);
+  - one- or two-word blips from the other voice ("mm", "yeah") are merged, not split;
+  - partials are only sent once the voice is known;
+  - finals wait for diarization to reach their last word (at most latency + 0.6 s).
+- **Roles:** Sortformer orders voices by arrival (slot 0 = first voice heard). The first voice is assumed to be the interviewer (`ASR_DIAR_FIRST_SPEAKER`). The UI buttons **That was me** / **That was interviewer** fix the mapping live.
+- **Performance:** each step processes about 30 s of cached context, so its cost barely depends on the chunk size. `ASR_DIAR_CHUNK_LEN=auto` times one step at start-up and picks the smallest chunk that runs at ≤ 0.6 × real time:
+
+  | Hardware (measured / expected) | Step | Chosen chunk | Speaker latency |
+  | :--- | :--- | :--- | :--- |
+  | NVIDIA GPU | tens of ms | 0.48 s | ~1.0 s |
+  | Multi-core laptop CPU | ~0.2–0.4 s | 0.96 s | ~1.5 s |
+  | 1 CPU thread (CI sandbox, measured) | ~1.6 s | 3.84 s | ~4.4 s |
+
+  Diarization runs on its own thread, so transcription never waits for it. If it still falls more than 8 s behind, the service reports `diarization: "too_slow"` and the app switches to the manual toggle.
+- **Limits:**
+  - Overlapping speech is labelled with the louder or more active voice.
+  - Accuracy depends on the room: a headset for the candidate plus the interviewer on speakers works best.
+  - Real-model accuracy has not been measured in this repo; the tests use random weights.
+

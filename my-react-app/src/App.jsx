@@ -445,6 +445,10 @@ export default function App() {
     activeSpeaker,
     switchSpeaker,
     asrStatus,
+    speakerMode,
+    setSpeakerMode,
+    diarStatus,
+    assignLastSpeaker,
     audioDevices,
     selectedMicId,
     switchMicrophone
@@ -669,6 +673,10 @@ export default function App() {
               onSwitchSpeaker={switchSpeaker}
               isSystemAudioActive={isSystemAudioActive}
               asrStatus={asrStatus}
+              speakerMode={speakerMode}
+              onChangeSpeakerMode={setSpeakerMode}
+              diarStatus={diarStatus}
+              onAssignLastSpeaker={assignLastSpeaker}
               audioDevices={audioDevices}
               selectedMicId={selectedMicId}
               onSwitchMicrophone={switchMicrophone}

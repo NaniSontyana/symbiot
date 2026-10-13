@@ -61,6 +61,46 @@ class FakeEngine:
         return StepResult(text="", is_eou=False)
 
 
+class FakeDiarEngine:
+    """Same timing as the real engine: 6-frame chunks, released after 7 frames of right context."""
+
+    frame_secs = 0.08
+    is_ready = True
+    load_error = None
+    model_name = "fake-sortformer"
+    latency_secs = 1.04
+
+    def __init__(self, speaker_at, chunk_len=6, right_context=7, stalled=False):
+        self.speaker_at = speaker_at
+        self.chunk_len = chunk_len
+        self.right_context = right_context
+        self.stalled = stalled
+        self.resets = 0
+
+    def create_stream(self):
+        return {"samples": 0, "next": 0}
+
+    def reset_stream(self, state):
+        state.update(samples=0, next=0)
+        self.resets += 1
+
+    def feed(self, state, samples):
+        state["samples"] += len(samples)
+        out = []
+        if self.stalled:
+            return out
+        while state["samples"] >= (state["next"] * self.chunk_len + self.chunk_len + self.right_context) * CHUNK_SAMPLES:
+            first = state["next"] * self.chunk_len
+            probs = np.zeros((self.chunk_len, 4), dtype=np.float32)
+            for j in range(self.chunk_len):
+                spk = self.speaker_at((first + j) * 0.08 + 0.08 / 2)
+                if spk is not None:
+                    probs[j, spk] = 0.9
+            out.append((first, probs))
+            state["next"] += 1
+        return out
+
+
 def speech_chunk(amplitude: float = 0.3) -> bytes:
     t = np.arange(CHUNK_SAMPLES) / 16000
     return (amplitude * np.sin(2 * np.pi * 220 * t) * 32767).astype(np.int16).tobytes()

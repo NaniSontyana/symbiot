@@ -36,11 +36,22 @@ function resampleAndConvertToInt16(float32Array, inRate, outRate = 16000) {
 /**
  * Custom React Hook for Real-Time Microphone & Desktop Audio Capture & WebSocket Streaming
  */
-// Channel byte for microphone audio. With system audio shared, the mic is always the applicant
-// (0x02) and the interviewer arrives on system audio (0x01). Mic-only mode uses the manual toggle.
-function micChannelFor(systemAudioActive, manualSpeaker) {
+// Channel byte for microphone audio:
+//  - system audio shared: mic = applicant (0x02); the interviewer arrives on system audio (0x01)
+//  - mic only + auto:     0x03 "mixed" -> the ASR service separates the two voices (Streaming Sortformer)
+//  - mic only + manual:   the speaker toggle decides (0x01 interviewer / 0x02 applicant)
+function micChannelFor(systemAudioActive, manualSpeaker, autoSeparation = false) {
   if (systemAudioActive) return 0x02;
+  if (autoSeparation) return 0x03;
   return manualSpeaker === 'applicant' ? 0x02 : 0x01;
+}
+
+function loadSpeakerMode() {
+  try {
+    return window.localStorage.getItem('symbiot.speakerMode') === 'manual' ? 'manual' : 'auto';
+  } catch {
+    return 'auto';
+  }
 }
 
 export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
@@ -86,11 +97,40 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
   //  - dual-source mode (system audio shared): system audio = interviewer (0x01), mic = applicant (0x02)
   //  - mic-only mode: the mic is labelled by the manual speaker toggle
   const isSystemAudioActiveRef = useRef(false);
-  const micChannelByte = () => micChannelFor(isSystemAudioActiveRef.current, activeSpeakerRef.current);
+
+  // Mic-only speaker mode: 'auto' (separate voices with diarization) or 'manual' (toggle)
+  const [speakerMode, setSpeakerModeState] = useState(loadSpeakerMode);
+  const speakerModeRef = useRef(speakerMode);
+  // Diarization status from the ASR service: 'ready' | 'loading' | 'error' | 'disabled' | 'too_slow'
+  const [diarStatus, setDiarStatus] = useState(null);
+  const diarStatusRef = useRef(null);
+  const [diarRoles, setDiarRoles] = useState(null);
+
+  const autoSeparationActive = () => speakerModeRef.current === 'auto' && diarStatusRef.current === 'ready';
+  const micChannelByte = () =>
+    micChannelFor(isSystemAudioActiveRef.current, activeSpeakerRef.current, autoSeparationActive());
 
   // ASR model status reported by the service ('loading' | 'ready' | 'error'); null = not connected
   const [asrStatus, setAsrStatus] = useState(null);
   const asrReadyRef = useRef(false);
+
+  // Send one mic PCM frame. When the mic's channel changes (mode switch, toggle, diarizer
+  // becoming ready / too slow) the service's per-channel state is reset first, so half an
+  // utterance is never glued onto audio labelled differently.
+  const lastMicChannelRef = useRef(null);
+  const sendMicFrame = (pcmBytes) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN || pcmBytes.byteLength === 0) return;
+    const channelByte = micChannelByte();
+    if (lastMicChannelRef.current !== null && lastMicChannelRef.current !== channelByte) {
+      socket.send(JSON.stringify({ type: 'reset_buffer' }));
+    }
+    lastMicChannelRef.current = channelByte;
+    const framedBuffer = new Uint8Array(1 + pcmBytes.byteLength);
+    framedBuffer[0] = channelByte;
+    framedBuffer.set(pcmBytes, 1);
+    socket.send(framedBuffer);
+  };
 
   const reconnectTimerRef = useRef(null);
 
@@ -116,11 +156,21 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
           if (data.type === 'asr_status') {
             asrReadyRef.current = data.status === 'ready';
             setAsrStatus(data.status);
+            diarStatusRef.current = data.diarization || null;
+            setDiarStatus(data.diarization || null);
+            if (data.diarization === 'too_slow') {
+              console.warn('[ASR Streamer] Live voice separation is too slow on this machine; using the manual speaker toggle.');
+            }
+          } else if (data.type === 'diar_roles') {
+            setDiarRoles(data);
           } else if ((data.type === 'transcript_chunk' || data.type === 'transcript_partial') && typeof data.text === 'string') {
             const isFinal = data.type === 'transcript_chunk';
             const speaker = data.speaker === 'applicant' ? 'applicant' : 'interviewer';
             if (data.text) {
-              setLiveTranscript(`${speaker === 'applicant' ? 'You' : 'Interviewer'}: ${data.text}`);
+              const voice = data.diarized && data.speaker_index !== null && data.speaker_index !== undefined
+                ? ` (voice ${data.speaker_index + 1})`
+                : '';
+              setLiveTranscript(`${speaker === 'applicant' ? 'You' : 'Interviewer'}${voice}: ${data.text}`);
             }
             if (onTranscriptRef.current) {
               onTranscriptRef.current(data.text, speaker, data.engine || 'parakeet', isFinal);
@@ -136,6 +186,9 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
         socketRef.current = null;
         asrReadyRef.current = false;
         setAsrStatus(null);
+        diarStatusRef.current = null;
+        setDiarStatus(null);
+        lastMicChannelRef.current = null; // fresh connection, fresh per-channel state
         reconnectTimerRef.current = setTimeout(() => {
           connectAsrSocket();
         }, 2000);
@@ -392,11 +445,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
             if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
               const pcmBytes = new Uint8Array(event.data.pcmBuffer);
               if (pcmBytes.byteLength > 0) {
-                const channelByte = micChannelByte();
-                const framedBuffer = new Uint8Array(1 + pcmBytes.byteLength);
-                framedBuffer[0] = channelByte;
-                framedBuffer.set(pcmBytes, 1);
-                socketRef.current.send(framedBuffer);
+                sendMicFrame(pcmBytes);
               }
             }
           }
@@ -430,11 +479,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
             const pcmBuffer = resampleAndConvertToInt16(inputData, audioCtx.sampleRate, 16000);
             const pcmBytes = new Uint8Array(pcmBuffer);
             if (pcmBytes.byteLength > 0) {
-              const channelByte = micChannelByte();
-              const framedBuffer = new Uint8Array(1 + pcmBytes.byteLength);
-              framedBuffer[0] = channelByte;
-              framedBuffer.set(pcmBytes, 1);
-              socketRef.current.send(framedBuffer);
+              sendMicFrame(pcmBytes);
             }
           }
         };
@@ -454,18 +499,11 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     }
   };
 
-  // Switch between dual-source and mic-only labelling. The mic's channel changes, so the
-  // ASR service's per-channel state is reset to avoid gluing half-utterances together.
+  // Switch between dual-source and mic-only labelling. The mic's channel byte changes with it;
+  // sendMicFrame() notices and resets the ASR service's per-channel state.
   const setCaptureMode = (systemAudioActive) => {
-    if (isSystemAudioActiveRef.current === systemAudioActive) {
-      setIsSystemAudioActive(systemAudioActive);
-      return;
-    }
     isSystemAudioActiveRef.current = systemAudioActive;
     setIsSystemAudioActive(systemAudioActive);
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ type: 'reset_buffer' }));
-    }
   };
 
   // Start capture of System Audio (Zoom, Meet, Browser Tab) for pure interviewer audio
@@ -618,6 +656,27 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     }
   };
 
+  // Mic-only speaker mode: 'auto' (voice separation) or 'manual' (toggle)
+  const setSpeakerMode = (mode) => {
+    const next = mode === 'manual' ? 'manual' : 'auto';
+    speakerModeRef.current = next;
+    setSpeakerModeState(next);
+    setLiveTranscript('');
+    try {
+      window.localStorage.setItem('symbiot.speakerMode', next);
+    } catch {
+      // storage unavailable (private mode): the choice just isn't remembered
+    }
+  };
+
+  // Correct the voice -> role mapping using the most recent utterance ("That was me")
+  const assignLastSpeaker = (role) => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: 'assign_last_speaker', role }));
+      console.log(`[ASR Streamer] Last voice assigned to: ${role}`);
+    }
+  };
+
   const resetAsrBuffer = () => {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({ type: 'reset_buffer' }));
@@ -659,6 +718,11 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     switchSpeaker,
     resetAsrBuffer,
     asrStatus,
+    speakerMode,
+    setSpeakerMode,
+    diarStatus,
+    diarRoles,
+    assignLastSpeaker,
     audioDevices,
     selectedMicId,
     switchMicrophone,

@@ -39,6 +39,10 @@ class TranscriptEvent:
     text: str
     is_final: bool
     reason: str  # "partial" | "eou" | "silence" | "max_length" | "flush"
+    # Stream time (s) at which each word of `text` was first decoded, aligned with text.split().
+    # Used to split an utterance when the speaker changes (mic-only diarization).
+    word_times: Optional[List[float]] = None
+    end_time: Optional[float] = None  # stream time (s) of the audio that produced this event
 
 
 @dataclass
@@ -72,8 +76,10 @@ class ChannelTranscriber:
         self.last_speech_time: Optional[float] = None  # clock() of the last chunk with voice activity
 
         self._chunk_bytes = engine.chunk_samples * 2  # int16
+        self._chunk_secs = engine.chunk_samples / float(engine.sample_rate)
+        self._chunk_index = 0  # input chunks consumed since creation / reset (stream clock)
         self._pending = bytearray()
-        self._preroll: Deque[np.ndarray] = deque(maxlen=max(self.config.preroll_chunks, 0) or None)
+        self._preroll: Deque = deque(maxlen=max(self.config.preroll_chunks, 0) or None)
         self._state = None  # created lazily so idle channels cost nothing
 
         self._active = False
@@ -81,6 +87,8 @@ class ChannelTranscriber:
         self._last_partial = ""
         self._silence_run = 0
         self._utterance_chunks = 0
+        self._word_times: List[float] = []
+        self._last_audio_end = 0.0
 
     # ---------------------------------------------------------------- public
     def feed(self, pcm_bytes: bytes) -> List[TranscriptEvent]:
@@ -106,7 +114,13 @@ class ChannelTranscriber:
         """Drop all buffered audio, text and model state for this channel."""
         self._pending.clear()
         self._preroll.clear()
+        self._chunk_index = 0
         self._go_idle()
+
+    @property
+    def stream_time(self) -> float:
+        """Seconds of audio consumed on this channel since creation / reset."""
+        return self._chunk_index * self._chunk_secs
 
     @property
     def is_active(self) -> bool:
@@ -115,6 +129,8 @@ class ChannelTranscriber:
     # -------------------------------------------------------------- internals
     def _process_chunk(self, chunk: bytes) -> List[TranscriptEvent]:
         events: List[TranscriptEvent] = []
+        index = self._chunk_index
+        self._chunk_index += 1
         has_speech = self.vad.is_speech(chunk)
         if has_speech:
             self.last_speech_time = self._clock()
@@ -125,7 +141,7 @@ class ChannelTranscriber:
         if not self._active:
             if not has_speech:
                 if self._preroll.maxlen:
-                    self._preroll.append(samples)
+                    self._preroll.append((samples, index))
                 return events
             # Speech onset: wake the model and replay the pre-roll for context.
             self._active = True
@@ -135,12 +151,12 @@ class ChannelTranscriber:
                 self._state = self.engine.create_stream_state()
             backlog = list(self._preroll)
             self._preroll.clear()
-            for past in backlog:
-                if self._run_step(past, events):
+            for past, past_index in backlog:
+                if self._run_step(past, events, past_index):
                     return events
 
         self._silence_run = 0 if has_speech else self._silence_run + 1
-        if self._run_step(samples, events):
+        if self._run_step(samples, events, index):
             return events
 
         if self._utterance_raw.strip():
@@ -155,15 +171,24 @@ class ChannelTranscriber:
             self._go_idle()
         return events
 
-    def _run_step(self, samples: np.ndarray, events: List[TranscriptEvent]) -> bool:
+    def _run_step(self, samples: np.ndarray, events: List[TranscriptEvent], index: int) -> bool:
         """Run one model step. Returns True if the utterance was finalised."""
         result = self.engine.step(self._state, samples)
         self._utterance_chunks += 1
+        self._last_audio_end = (index + 1) * self._chunk_secs
         if result.text:
             self._utterance_raw += result.text
             partial = _clean(self._utterance_raw)
+            n_words = len(partial.split())
+            if n_words < len(self._word_times):
+                del self._word_times[n_words:]
+            while len(self._word_times) < n_words:
+                self._word_times.append(self._last_audio_end)
             if self.config.emit_partials and partial and partial != self._last_partial and not result.is_eou:
-                events.append(TranscriptEvent(text=partial, is_final=False, reason="partial"))
+                events.append(TranscriptEvent(
+                    text=partial, is_final=False, reason="partial",
+                    word_times=list(self._word_times), end_time=self._last_audio_end,
+                ))
             self._last_partial = partial
         if result.is_eou:
             self._finalize(events, "eou")
@@ -173,7 +198,10 @@ class ChannelTranscriber:
     def _finalize(self, events: List[TranscriptEvent], reason: str) -> None:
         text = _clean(self._utterance_raw)
         if text:
-            events.append(TranscriptEvent(text=text, is_final=True, reason=reason))
+            events.append(TranscriptEvent(
+                text=text, is_final=True, reason=reason,
+                word_times=list(self._word_times), end_time=self._last_audio_end,
+            ))
             logger.info("[ASR %s] final (%s): %r", self.channel, reason, text)
         self._go_idle()
 
@@ -183,6 +211,7 @@ class ChannelTranscriber:
         self._last_partial = ""
         self._silence_run = 0
         self._utterance_chunks = 0
+        self._word_times = []
         self.vad.reset()
         if self._state is not None:
             self.engine.reset_stream_state(self._state)

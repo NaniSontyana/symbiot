@@ -11,6 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from services.echo_guard import EchoGuard
 from services.parakeet_eou_engine import DEFAULT_MODEL_NAME, ParakeetEOUEngine
+from services.sortformer_diar_engine import DEFAULT_DIAR_MODEL, SortformerDiarEngine
+from services.speaker_attribution import DiarizationConfig, DiarizedTranscriber, SpeakerRoles
 from services.transcriber import ChannelTranscriber, TranscriberConfig
 from services.vad import VoiceActivityDetector
 
@@ -18,12 +20,22 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("asr_app")
 
 CHANNELS = ("interviewer", "applicant")
-CHANNEL_HEADERS = {0x01: "interviewer", 0x02: "applicant"}
+# 0x01 = interviewer (system audio), 0x02 = applicant (mic),
+# 0x03 = mixed: one mic hears both people -> speakers separated by voice (Streaming Sortformer)
+CHANNEL_HEADERS = {0x01: "interviewer", 0x02: "applicant", 0x03: "mixed"}
+MIXED = "mixed"
 
 
 def _env_float(name: str, default: float) -> float:
     try:
         return float(os.getenv(name, default))
+    except ValueError:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, default))
     except ValueError:
         return default
 
@@ -48,18 +60,51 @@ def build_echo_guard():
     return EchoGuard(overlap_threshold=_env_float("ASR_ECHO_OVERLAP", 0.6))
 
 
+def build_diar_engine():
+    if os.getenv("ASR_DIARIZATION", "1") == "0":
+        return None
+    return SortformerDiarEngine(
+        model_name=os.getenv("ASR_DIAR_MODEL", DEFAULT_DIAR_MODEL),
+        device=os.getenv("ASR_DEVICE") or None,
+        # "auto" = benchmark at load and pick the lowest latency this machine sustains
+        chunk_len=os.getenv("ASR_DIAR_CHUNK_LEN", "auto"),
+        chunk_right_context=_env_int("ASR_DIAR_RIGHT_CONTEXT", 7),  # 0.56 s look-ahead
+    )
+
+
+def build_diarization_config() -> DiarizationConfig:
+    return DiarizationConfig(
+        threshold=_env_float("ASR_DIAR_THRESHOLD", 0.5),
+        min_switch_secs=_env_float("ASR_DIAR_MIN_SWITCH_SECS", 0.4),
+        word_lag_secs=_env_float("ASR_DIAR_WORD_LAG_SECS", 0.25),
+    )
+
+
+def build_roles() -> SpeakerRoles:
+    return SpeakerRoles(os.getenv("ASR_DIAR_FIRST_SPEAKER", "interviewer"))
+
+
 def build_vad() -> VoiceActivityDetector:
     return VoiceActivityDetector(base_energy_threshold=_env_float("ASR_VAD_ENERGY_THRESHOLD", 0.000003))
 
 
-# Shared model (weights only). All per-stream state lives in ChannelTranscriber instances.
+# Shared models (weights only). All per-stream state lives in ChannelTranscriber /
+# DiarizedTranscriber instances.
 engine = build_engine()
+diar_engine = build_diar_engine()
+
+
+def _load_models() -> None:
+    if not engine.is_ready:
+        engine.load()
+    if diar_engine is not None and not diar_engine.is_ready:
+        diar_engine.load()  # after ASR so transcription is available as early as possible
 
 
 def _load_engine_in_background() -> None:
-    if engine.is_ready:
+    if engine.is_ready and (diar_engine is None or diar_engine.is_ready):
         return
-    threading.Thread(target=engine.load, name="parakeet-loader", daemon=True).start()
+    threading.Thread(target=_load_models, name="model-loader", daemon=True).start()
 
 
 @asynccontextmanager
@@ -88,6 +133,16 @@ def _engine_status() -> str:
     return "loading"
 
 
+def _diar_status() -> str:
+    if diar_engine is None:
+        return "disabled"
+    if diar_engine.is_ready:
+        return "ready"
+    if diar_engine.load_error:
+        return "error"
+    return "loading"
+
+
 @app.get("/health")
 def health_check():
     status = _engine_status()
@@ -99,6 +154,12 @@ def health_check():
         "model_status": status,
         "device": str(engine.device) if engine.device is not None else None,
         "error": engine.load_error,
+        "diarization": {
+            "status": _diar_status(),
+            "model": diar_engine.model_name if diar_engine is not None else None,
+            "latency_secs": round(diar_engine.latency_secs, 2) if diar_engine is not None else None,
+            "error": diar_engine.load_error if diar_engine is not None else None,
+        },
     }
 
 
@@ -110,6 +171,8 @@ async def websocket_transcribe(websocket: WebSocket):
     # Per-connection state: one independent streaming transcriber per speaker channel.
     transcribers = {}
     echo_guard = build_echo_guard()  # drops interviewer audio that leaked into the mic
+    roles = build_roles()  # voice slot -> interviewer / applicant (mixed channel only)
+    diar_too_slow = False  # this machine could not keep up with live diarization
     active_speaker = "interviewer"
     last_status_sent = None
     stats = {"chunks": 0, "proc_s": 0.0, "audio_s": 0.0}
@@ -124,19 +187,49 @@ async def websocket_transcribe(websocket: WebSocket):
 
     async def announce_status():
         nonlocal last_status_sent
-        status = _engine_status()
+        status = (_engine_status(), "too_slow" if diar_too_slow else _diar_status())
         if status != last_status_sent:
             last_status_sent = status
-            await send_json({"type": "asr_status", "status": status, "message": engine.load_error})
+            await send_json({
+                "type": "asr_status",
+                "status": status[0],
+                "message": engine.load_error,
+                "diarization": status[1],
+                "diarization_message": diar_engine.load_error if diar_engine is not None else None,
+            })
 
-    def get_transcriber(channel: str) -> ChannelTranscriber:
+    def get_transcriber(channel: str):
         if channel not in transcribers:
-            transcribers[channel] = ChannelTranscriber(
-                engine, channel, config=build_transcriber_config(), vad=build_vad()
-            )
+            base = ChannelTranscriber(engine, channel, config=build_transcriber_config(), vad=build_vad())
+            if channel == MIXED and diar_engine is not None and diar_engine.is_ready and not diar_too_slow:
+                transcribers[channel] = DiarizedTranscriber(
+                    base, diar_engine, build_diarization_config(), threaded=True
+                )
+            else:
+                transcribers[channel] = base
         return transcribers[channel]
 
+    async def emit_mixed(events):
+        for event in events:
+            if not event.text:
+                continue
+            await send_json({
+                "type": "transcript_chunk" if event.is_final else "transcript_partial",
+                "text": event.text,
+                "speaker": roles.role(event.speaker_index),
+                "speaker_index": event.speaker_index,
+                "diarized": True,
+                "engine": engine.engine_type,
+                "is_final": event.is_final,
+                "reason": event.reason,
+            })
+
     async def emit(events, channel: str):
+        if channel == MIXED and isinstance(transcribers.get(MIXED), DiarizedTranscriber):
+            await emit_mixed(events)
+            return
+        if channel == MIXED:
+            channel = active_speaker  # diarizer unavailable: fall back to the manual speaker toggle
         for event in events:
             if echo_guard is not None:
                 if channel == "interviewer":
@@ -192,6 +285,13 @@ async def websocket_transcribe(websocket: WebSocket):
                         f"{stats['proc_s'] / stats['audio_s']:.3f}"
                     )
                 await emit(events, channel)
+                if isinstance(transcriber, DiarizedTranscriber) and transcriber.degraded:
+                    # Too slow for live diarization: stop it and let the client switch to the manual toggle.
+                    diar_too_slow = True
+                    transcriber.close()
+                    await emit(await asyncio.to_thread(transcriber.flush), channel)
+                    transcribers.pop(channel, None)
+                    await announce_status()
                 continue
 
             text = message.get("text")
@@ -209,7 +309,20 @@ async def websocket_transcribe(websocket: WebSocket):
                     for transcriber in transcribers.values():
                         await asyncio.to_thread(transcriber.reset)
                     echo_guard = build_echo_guard()
+                    roles.clear_assignment()  # voice slots restart in arrival order after a reset
                     logger.info("[ASR WS] Audio buffers & streaming state reset. Ready for next question!")
+                elif msg_type in ("assign_last_speaker", "assign_speaker", "set_first_speaker"):
+                    # Live correction of the voice -> role mapping ("That was me" / "That was the interviewer")
+                    role = payload.get("role", "applicant")
+                    mixed = transcribers.get(MIXED)
+                    if msg_type == "set_first_speaker":
+                        roles.set_first_speaker(role)
+                    elif msg_type == "assign_speaker":
+                        roles.assign(payload.get("speaker_index"), role)
+                    elif isinstance(mixed, DiarizedTranscriber):
+                        roles.assign(mixed.last_final_speaker, role)
+                    logger.info(f"[ASR WS] Speaker roles updated: {roles.describe()}")
+                    await send_json({"type": "diar_roles", **roles.describe()})
                 elif msg_type == "flush":
                     for channel, transcriber in list(transcribers.items()):
                         await emit(await asyncio.to_thread(transcriber.flush), channel)
@@ -219,6 +332,9 @@ async def websocket_transcribe(websocket: WebSocket):
     except Exception as e:
         logger.exception(f"[ASR WS] Error: {e}")
     finally:
+        for transcriber in transcribers.values():
+            if isinstance(transcriber, DiarizedTranscriber):
+                transcriber.close()
         transcribers.clear()
 
 
