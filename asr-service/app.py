@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from services.echo_guard import EchoGuard
 from services.parakeet_eou_engine import DEFAULT_MODEL_NAME, ParakeetEOUEngine
 from services.transcriber import ChannelTranscriber, TranscriberConfig
 from services.vad import VoiceActivityDetector
@@ -39,6 +40,12 @@ def build_transcriber_config() -> TranscriberConfig:
         input_gain=_env_float("ASR_INPUT_GAIN", 1.0),
         emit_partials=os.getenv("ASR_EMIT_PARTIALS", "1") != "0",
     )
+
+
+def build_echo_guard():
+    if os.getenv("ASR_ECHO_GUARD", "1") == "0":
+        return None
+    return EchoGuard(overlap_threshold=_env_float("ASR_ECHO_OVERLAP", 0.6))
 
 
 def build_vad() -> VoiceActivityDetector:
@@ -102,6 +109,7 @@ async def websocket_transcribe(websocket: WebSocket):
 
     # Per-connection state: one independent streaming transcriber per speaker channel.
     transcribers = {}
+    echo_guard = build_echo_guard()  # drops interviewer audio that leaked into the mic
     active_speaker = "interviewer"
     last_status_sent = None
     stats = {"chunks": 0, "proc_s": 0.0, "audio_s": 0.0}
@@ -130,6 +138,13 @@ async def websocket_transcribe(websocket: WebSocket):
 
     async def emit(events, channel: str):
         for event in events:
+            if echo_guard is not None:
+                if channel == "interviewer":
+                    echo_guard.note_interviewer_text(event.text, event.is_final)
+                elif echo_guard.is_echo(event.text):
+                    if event.is_final:
+                        logger.info(f"[ASR WS] Dropped mic echo of interviewer audio: '{event.text}'")
+                    continue
             await send_json({
                 "type": "transcript_chunk" if event.is_final else "transcript_partial",
                 "text": event.text,
@@ -166,6 +181,8 @@ async def websocket_transcribe(websocket: WebSocket):
                 transcriber = get_transcriber(channel)
                 started = time.perf_counter()
                 events = await asyncio.to_thread(transcriber.feed, chunk_bytes)
+                if echo_guard is not None and channel == "interviewer" and transcriber.last_speech_time:
+                    echo_guard.note_interviewer_speech(transcriber.last_speech_time)
                 stats["proc_s"] += time.perf_counter() - started
                 stats["audio_s"] += len(chunk_bytes) / 2 / engine.sample_rate
                 stats["chunks"] += 1
@@ -191,6 +208,7 @@ async def websocket_transcribe(websocket: WebSocket):
                 elif msg_type == "reset_buffer":
                     for transcriber in transcribers.values():
                         await asyncio.to_thread(transcriber.reset)
+                    echo_guard = build_echo_guard()
                     logger.info("[ASR WS] Audio buffers & streaming state reset. Ready for next question!")
                 elif msg_type == "flush":
                     for channel, transcriber in list(transcribers.items()):

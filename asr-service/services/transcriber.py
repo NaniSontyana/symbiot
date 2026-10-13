@@ -20,9 +20,10 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque, List, Optional
+from typing import Callable, Deque, List, Optional
 
 import numpy as np
 
@@ -61,11 +62,14 @@ class ChannelTranscriber:
         channel: str,
         config: Optional[TranscriberConfig] = None,
         vad: Optional[VoiceActivityDetector] = None,
+        clock: Callable[[], float] = time.monotonic,
     ):
         self.engine = engine
         self.channel = channel
         self.config = config or TranscriberConfig()
         self.vad = vad or VoiceActivityDetector()
+        self._clock = clock
+        self.last_speech_time: Optional[float] = None  # clock() of the last chunk with voice activity
 
         self._chunk_bytes = engine.chunk_samples * 2  # int16
         self._pending = bytearray()
@@ -112,6 +116,8 @@ class ChannelTranscriber:
     def _process_chunk(self, chunk: bytes) -> List[TranscriptEvent]:
         events: List[TranscriptEvent] = []
         has_speech = self.vad.is_speech(chunk)
+        if has_speech:
+            self.last_speech_time = self._clock()
         samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
         if self.config.input_gain != 1.0:
             samples = np.clip(samples * self.config.input_gain, -1.0, 1.0)

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { GEMINI_MODELS } from '../lib/models';
 import { Mic, MicOff, Radio, Bot, Eye, ChevronDown, Volume2, User } from 'lucide-react';
 
 function AudioVisualizer({
@@ -14,6 +15,8 @@ function AudioVisualizer({
   setBgMode,
   activeSpeaker = 'interviewer',
   onSwitchSpeaker,
+  isSystemAudioActive = false,
+  asrStatus = null,
   audioDevices = [],
   selectedMicId = '',
   onSwitchMicrophone,
@@ -25,7 +28,7 @@ function AudioVisualizer({
   const opacityPresets = [0.35, 0.6, 0.85, 1.0];
 
   const modelList = [
-    { id: 'gemini-1.5-flash', name: 'Google Gemini Flash', badge: 'Active Free' },
+    ...GEMINI_MODELS,
     { id: 'groq/llama-3.3-70b', name: 'Groq Llama 3.3 70B', badge: 'Ultra Fast Free' },
     { id: 'openai/gpt-oss-120b', name: 'OpenAI GPT-OSS 120B', badge: 'OpenRouter Free' },
   ];
@@ -147,6 +150,11 @@ function AudioVisualizer({
               </div>
             )}
           </div>
+          {asrStatus && asrStatus !== 'ready' && (
+            <p style={{ fontSize: '0.68rem', color: asrStatus === 'error' ? '#f87171' : '#a3a3a3', margin: 0 }}>
+              {asrStatus === 'error' ? 'Speech model failed to load (see asr-service /health)' : 'Loading speech model…'}
+            </p>
+          )}
           {liveTranscript && (
             <p style={{ fontSize: '0.72rem', color: '#a3a3a3', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '240px' }}>
               "{liveTranscript}"
@@ -155,7 +163,22 @@ function AudioVisualizer({
         </div>
       </div>
 
-      {/* 2. Middle: Sequential Dual-Turn Speaker Protocol Badge */}
+      {/* 2. Middle: Speaker segregation (automatic with system audio, manual toggle in mic-only mode) */}
+      {isSystemAudioActive ? (
+        <div
+          style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+          title="Automatic speaker separation: system audio (meeting app) is the interviewer and is answered by the AI; your microphone is you and is never sent to the AI."
+        >
+          <span style={{ padding: '4px 10px', fontSize: '0.72rem', fontWeight: 700, borderRadius: '6px', border: '1px solid #ffffff', background: '#ffffff', color: '#000000', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <Volume2 size={12} color="#000000" />
+            <span>Interviewer · System audio</span>
+          </span>
+          <span style={{ padding: '4px 10px', fontSize: '0.72rem', fontWeight: 600, borderRadius: '6px', border: '1px solid #262626', background: '#0a0a0a', color: '#a3a3a3', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <User size={12} color="#a3a3a3" />
+            <span>You · Mic</span>
+          </span>
+        </div>
+      ) : (
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
         <button
           onClick={() => onSwitchSpeaker && onSwitchSpeaker('interviewer')}
@@ -199,6 +222,7 @@ function AudioVisualizer({
           <span>2. Candidate Answering</span>
         </button>
       </div>
+      )}
 
       {/* 3. Right: AI Engine Model & Canvas Controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>

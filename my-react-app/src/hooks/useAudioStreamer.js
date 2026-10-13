@@ -36,6 +36,13 @@ function resampleAndConvertToInt16(float32Array, inRate, outRate = 16000) {
 /**
  * Custom React Hook for Real-Time Microphone & Desktop Audio Capture & WebSocket Streaming
  */
+// Channel byte for microphone audio. With system audio shared, the mic is always the applicant
+// (0x02) and the interviewer arrives on system audio (0x01). Mic-only mode uses the manual toggle.
+function micChannelFor(systemAudioActive, manualSpeaker) {
+  if (systemAudioActive) return 0x02;
+  return manualSpeaker === 'applicant' ? 0x02 : 0x01;
+}
+
 export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isSystemAudioActive, setIsSystemAudioActive] = useState(false);
@@ -75,6 +82,16 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     activeSpeakerRef.current = activeSpeaker;
   }, [activeSpeaker]);
 
+  // Speaker segregation:
+  //  - dual-source mode (system audio shared): system audio = interviewer (0x01), mic = applicant (0x02)
+  //  - mic-only mode: the mic is labelled by the manual speaker toggle
+  const isSystemAudioActiveRef = useRef(false);
+  const micChannelByte = () => micChannelFor(isSystemAudioActiveRef.current, activeSpeakerRef.current);
+
+  // ASR model status reported by the service ('loading' | 'ready' | 'error'); null = not connected
+  const [asrStatus, setAsrStatus] = useState(null);
+  const asrReadyRef = useRef(false);
+
   const reconnectTimerRef = useRef(null);
 
   // Initialize WebSocket connection to ASR Microservice
@@ -96,10 +113,17 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.type === 'transcript_chunk' && data.text) {
-            setLiveTranscript(data.text);
+          if (data.type === 'asr_status') {
+            asrReadyRef.current = data.status === 'ready';
+            setAsrStatus(data.status);
+          } else if ((data.type === 'transcript_chunk' || data.type === 'transcript_partial') && typeof data.text === 'string') {
+            const isFinal = data.type === 'transcript_chunk';
+            const speaker = data.speaker === 'applicant' ? 'applicant' : 'interviewer';
+            if (data.text) {
+              setLiveTranscript(`${speaker === 'applicant' ? 'You' : 'Interviewer'}: ${data.text}`);
+            }
             if (onTranscriptRef.current) {
-              onTranscriptRef.current(data.text, data.speaker || 'interviewer', data.engine || 'whisper');
+              onTranscriptRef.current(data.text, speaker, data.engine || 'parakeet', isFinal);
             }
           }
         } catch (err) {
@@ -110,6 +134,8 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
       ws.onclose = () => {
         console.log('[ASR Streamer] Disconnected from ASR Service. Reconnecting in 2s...');
         socketRef.current = null;
+        asrReadyRef.current = false;
+        setAsrStatus(null);
         reconnectTimerRef.current = setTimeout(() => {
           connectAsrSocket();
         }, 2000);
@@ -171,10 +197,13 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
           }
         }
         const trimmed = finalTranscript.trim();
-        if (trimmed) {
-          setLiveTranscript(trimmed);
+        // Fallback only: when the Parakeet ASR service is up it already transcribes the mic,
+        // and forwarding both would duplicate every utterance.
+        if (trimmed && !asrReadyRef.current) {
+          const speaker = micChannelFor(isSystemAudioActiveRef.current, activeSpeakerRef.current) === 0x02 ? 'applicant' : 'interviewer';
+          setLiveTranscript(`${speaker === 'applicant' ? 'You' : 'Interviewer'}: ${trimmed}`);
           if (onTranscriptRef.current) {
-            onTranscriptRef.current(trimmed, activeSpeakerRef.current, 'web-speech-api');
+            onTranscriptRef.current(trimmed, speaker, 'web-speech-api', true);
           }
         }
       };
@@ -363,7 +392,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
             if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
               const pcmBytes = new Uint8Array(event.data.pcmBuffer);
               if (pcmBytes.byteLength > 0) {
-                const channelByte = activeSpeakerRef.current === 'applicant' ? 0x02 : 0x01;
+                const channelByte = micChannelByte();
                 const framedBuffer = new Uint8Array(1 + pcmBytes.byteLength);
                 framedBuffer[0] = channelByte;
                 framedBuffer.set(pcmBytes, 1);
@@ -401,7 +430,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
             const pcmBuffer = resampleAndConvertToInt16(inputData, audioCtx.sampleRate, 16000);
             const pcmBytes = new Uint8Array(pcmBuffer);
             if (pcmBytes.byteLength > 0) {
-              const channelByte = activeSpeakerRef.current === 'applicant' ? 0x02 : 0x01;
+              const channelByte = micChannelByte();
               const framedBuffer = new Uint8Array(1 + pcmBytes.byteLength);
               framedBuffer[0] = channelByte;
               framedBuffer.set(pcmBytes, 1);
@@ -422,6 +451,20 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
       console.error('[ASR Streamer] Microphone access error:', err);
       setMicError(err.name === 'NotAllowedError' ? 'Microphone permission denied.' : err.message);
       setIsStreaming(false);
+    }
+  };
+
+  // Switch between dual-source and mic-only labelling. The mic's channel changes, so the
+  // ASR service's per-channel state is reset to avoid gluing half-utterances together.
+  const setCaptureMode = (systemAudioActive) => {
+    if (isSystemAudioActiveRef.current === systemAudioActive) {
+      setIsSystemAudioActive(systemAudioActive);
+      return;
+    }
+    isSystemAudioActiveRef.current = systemAudioActive;
+    setIsSystemAudioActive(systemAudioActive);
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: 'reset_buffer' }));
     }
   };
 
@@ -510,8 +553,8 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
         stopSystemAudioShare();
       };
 
-      setIsSystemAudioActive(true);
-      console.log('[ASR Streamer] System Audio capture active (Interviewer Channel 0x01)');
+      setCaptureMode(true);
+      console.log('[ASR Streamer] Dual-source mode: system audio -> interviewer (0x01), microphone -> applicant (0x02)');
     } catch (err) {
       console.error('[ASR Streamer] System Audio share error:', err);
     }
@@ -530,8 +573,8 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
       systemStreamRef.current.getTracks().forEach((track) => track.stop());
       systemStreamRef.current = null;
     }
-    setIsSystemAudioActive(false);
-    console.log('[ASR Streamer] System audio share stopped');
+    setCaptureMode(false);
+    console.log('[ASR Streamer] System audio share stopped (mic-only mode, manual speaker toggle)');
   };
 
   // Stop audio streaming (async to properly await AudioContext.close())
@@ -564,6 +607,10 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     setActiveSpeaker(speaker);
     activeSpeakerRef.current = speaker;
     setLiveTranscript('');
+    if (isSystemAudioActiveRef.current) {
+      // Dual-source mode labels audio by source; the manual toggle must not reset the interviewer stream.
+      return;
+    }
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({ type: 'set_speaker', speaker }));
       socketRef.current.send(JSON.stringify({ type: 'reset_buffer' }));
@@ -611,6 +658,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     activeSpeaker,
     switchSpeaker,
     resetAsrBuffer,
+    asrStatus,
     audioDevices,
     selectedMicId,
     switchMicrophone,

@@ -28,7 +28,19 @@ export async function getSessionContext(userId, queryText, customApiKey = null) 
 /**
  * Real-Time Multi-Model LLM Streaming Response Generator (Groq GPT-OSS 120B / Compound, OpenRouter, Gemini, Instant Synthesizer)
  */
-export async function streamCopilotAnswer(promptText, userContext, onChunk, customApiKey = null, selectedModel = 'gemini-1.5-flash') {
+// Current Gemini models. 1.5 / 2.0 are shut down and 2.5 Flash is retired in Oct 2026, so legacy ids
+// (e.g. saved UI selections) fall back to the default. GEMINI_MODEL in .env overrides the default.
+export const GEMINI_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite'];
+const RETIRED_GEMINI = /^gemini-(1\.|2\.0|2\.5)/;
+
+export function resolveGeminiModel(selectedModel, envDefault = process.env.GEMINI_MODEL) {
+  const fallback = envDefault && !RETIRED_GEMINI.test(envDefault) ? envDefault : GEMINI_MODELS[0];
+  if (typeof selectedModel !== 'string' || !selectedModel.startsWith('gemini-')) return fallback;
+  if (RETIRED_GEMINI.test(selectedModel)) return fallback;
+  return selectedModel;
+}
+
+export async function streamCopilotAnswer(promptText, userContext, onChunk, customApiKey = null, selectedModel = null) {
   const activeKey = customApiKey || process.env.GEMINI_API_KEY;
   const groqKey = process.env.GROQ_API_KEY || (activeKey && activeKey.startsWith('gsk_') ? activeKey : null);
   const openRouterKey = process.env.OPENROUTER_API_KEY;
@@ -876,9 +888,8 @@ CRITICAL EXECUTION GUIDELINES:
   // Tier 3: Google Gemini API
   if (activeKey && activeKey.startsWith('AIzaSy')) {
     try {
-      let targetModelName = 'gemini-1.5-flash';
-      if (selectedModel === 'gemini-1.5-pro') targetModelName = 'gemini-1.5-pro';
-      if (selectedModel === 'gemini-2.0-flash') targetModelName = 'gemini-2.0-flash';
+      // No temperature/top_p/top_k: they are deprecated for Gemini 3.x and rejected by newer models.
+      const targetModelName = resolveGeminiModel(selectedModel);
 
       console.log(`[LLM Router] Generating streaming answer with Google Gemini model: ${targetModelName}`);
       const genAI = new GoogleGenerativeAI(activeKey);

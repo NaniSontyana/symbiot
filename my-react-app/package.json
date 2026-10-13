@@ -10,7 +10,8 @@
     "build": "vite build",
     "electron:build": "vite build && electron-builder",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test \"src/**/*.test.js\""
   },
   "dependencies": {
     "lucide-react": "^1.33.0",

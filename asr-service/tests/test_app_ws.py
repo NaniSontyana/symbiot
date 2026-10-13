@@ -103,3 +103,20 @@ def test_reset_buffer_clears_pending_text(client_with):
         msg = ws.receive_json()
     assert (msg["type"], msg["text"]) == ("transcript_partial", "new")
     assert engine.states[0].resets >= 2
+
+
+def test_mic_echo_is_dropped_but_real_applicant_speech_passes(client_with):
+    engine = FakeEngine(script=[
+        StepResult(" how do you scale websockets", True),   # interviewer (system audio)
+        StepResult(" how do you scale websockets", True),   # same words leaking into the mic
+        StepResult(" i would shard connections", True),     # applicant actually answering
+    ])
+    with client_with(engine) as client, client.websocket_connect("/ws/transcribe") as ws:
+        ws.receive_json()
+        ws.send_bytes(b"\x01" + speech_chunk())
+        first = ws.receive_json()
+        ws.send_bytes(b"\x02" + speech_chunk())
+        ws.send_bytes(b"\x02" + speech_chunk())
+        second = ws.receive_json()
+    assert (first["speaker"], first["text"]) == ("interviewer", "how do you scale websockets")
+    assert (second["speaker"], second["text"]) == ("applicant", "i would shard connections")
