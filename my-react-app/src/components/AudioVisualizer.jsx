@@ -1,5 +1,26 @@
 import React, { useState } from 'react';
+import { GEMINI_MODELS } from '../lib/models';
 import { Mic, MicOff, Radio, Bot, Eye, ChevronDown, Volume2, User } from 'lucide-react';
+
+const chipStyle = (active) => ({
+  padding: '4px 10px',
+  fontSize: '0.72rem',
+  fontWeight: active ? 700 : 600,
+  borderRadius: '6px',
+  border: active ? '1px solid #ffffff' : '1px solid #262626',
+  background: active ? '#ffffff' : '#0a0a0a',
+  color: active ? '#000000' : '#a3a3a3',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '4px',
+});
+
+const DIAR_STATUS_TEXT = {
+  ready: 'Separate the two voices automatically (one microphone)',
+  loading: 'Voice separation model is loading…',
+  error: 'Voice separation model failed to load (see asr-service /health)',
+  too_slow: 'This computer is too slow for live voice separation (a GPU helps). Using the manual toggle.',
+};
 
 function AudioVisualizer({
   isStreaming,
@@ -14,6 +35,12 @@ function AudioVisualizer({
   setBgMode,
   activeSpeaker = 'interviewer',
   onSwitchSpeaker,
+  isSystemAudioActive = false,
+  asrStatus = null,
+  speakerMode = 'auto',
+  onChangeSpeakerMode,
+  diarStatus = null,
+  onAssignLastSpeaker,
   audioDevices = [],
   selectedMicId = '',
   onSwitchMicrophone,
@@ -24,8 +51,11 @@ function AudioVisualizer({
 
   const opacityPresets = [0.35, 0.6, 0.85, 1.0];
 
+  // Voice separation is used in mic-only mode when chosen and the service's diarizer is ready
+  const autoSeparation = !isSystemAudioActive && speakerMode === 'auto' && diarStatus === 'ready';
+
   const modelList = [
-    { id: 'gemini-1.5-flash', name: 'Google Gemini Flash', badge: 'Active Free' },
+    ...GEMINI_MODELS,
     { id: 'groq/llama-3.3-70b', name: 'Groq Llama 3.3 70B', badge: 'Ultra Fast Free' },
     { id: 'openai/gpt-oss-120b', name: 'OpenAI GPT-OSS 120B', badge: 'OpenRouter Free' },
   ];
@@ -147,6 +177,11 @@ function AudioVisualizer({
               </div>
             )}
           </div>
+          {asrStatus && asrStatus !== 'ready' && (
+            <p style={{ fontSize: '0.68rem', color: asrStatus === 'error' ? '#f87171' : '#a3a3a3', margin: 0 }}>
+              {asrStatus === 'error' ? 'Speech model failed to load (see asr-service /health)' : 'Loading speech model…'}
+            </p>
+          )}
           {liveTranscript && (
             <p style={{ fontSize: '0.72rem', color: '#a3a3a3', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '240px' }}>
               "{liveTranscript}"
@@ -155,7 +190,58 @@ function AudioVisualizer({
         </div>
       </div>
 
-      {/* 2. Middle: Sequential Dual-Turn Speaker Protocol Badge */}
+      {/* 2. Middle: Speaker segregation
+          - system audio shared: by source (system audio = interviewer, mic = you)
+          - mic only + Auto:     by voice (Streaming Sortformer diarization in asr-service)
+          - mic only + Manual:   speaker toggle */}
+      {isSystemAudioActive ? (
+        <div
+          style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+          title="Automatic speaker separation: system audio (meeting app) is the interviewer and is answered by the AI; your microphone is you and is never sent to the AI."
+        >
+          <span style={chipStyle(true)}>
+            <Volume2 size={12} color="#000000" />
+            <span>Interviewer · System audio</span>
+          </span>
+          <span style={chipStyle(false)}>
+            <User size={12} color="#a3a3a3" />
+            <span>You · Mic</span>
+          </span>
+        </div>
+      ) : autoSeparation ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span
+            style={chipStyle(true)}
+            title="One microphone, two voices: speech is separated by voice. Only the interviewer's questions are sent to the AI."
+          >
+            <Radio size={12} color="#000000" />
+            <span>Auto · by voice</span>
+          </span>
+          <button
+            onClick={() => onAssignLastSpeaker && onAssignLastSpeaker('applicant')}
+            style={{ ...chipStyle(false), cursor: 'pointer' }}
+            title="The last line was you, not the interviewer: remember this voice as yours"
+          >
+            <User size={12} color="#a3a3a3" />
+            <span>That was me</span>
+          </button>
+          <button
+            onClick={() => onAssignLastSpeaker && onAssignLastSpeaker('interviewer')}
+            style={{ ...chipStyle(false), cursor: 'pointer' }}
+            title="The last line was the interviewer: remember this voice as the interviewer"
+          >
+            <Volume2 size={12} color="#a3a3a3" />
+            <span>That was interviewer</span>
+          </button>
+          <button
+            onClick={() => onChangeSpeakerMode && onChangeSpeakerMode('manual')}
+            style={{ ...chipStyle(false), cursor: 'pointer', padding: '4px 8px' }}
+            title="Switch to the manual speaker toggle"
+          >
+            Manual
+          </button>
+        </div>
+      ) : (
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
         <button
           onClick={() => onSwitchSpeaker && onSwitchSpeaker('interviewer')}
@@ -198,7 +284,20 @@ function AudioVisualizer({
           <User size={12} color={activeSpeaker === 'applicant' ? '#000000' : '#a3a3a3'} />
           <span>2. Candidate Answering</span>
         </button>
+
+        {diarStatus && diarStatus !== 'disabled' && (
+          <button
+            onClick={() => onChangeSpeakerMode && onChangeSpeakerMode('auto')}
+            disabled={diarStatus !== 'ready'}
+            style={{ ...chipStyle(false), cursor: diarStatus === 'ready' ? 'pointer' : 'not-allowed', opacity: diarStatus === 'ready' ? 1 : 0.6, padding: '4px 8px' }}
+            title={DIAR_STATUS_TEXT[diarStatus] || 'Separate the two voices automatically'}
+          >
+            <Radio size={12} color="#a3a3a3" />
+            <span>{diarStatus === 'loading' ? 'Auto (loading…)' : 'Auto'}</span>
+          </button>
+        )}
       </div>
+      )}
 
       {/* 3. Right: AI Engine Model & Canvas Controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>

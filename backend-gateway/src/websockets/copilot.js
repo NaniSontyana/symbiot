@@ -29,9 +29,15 @@ export function setupCopilotWebSocket(server) {
         const payload = JSON.parse(data.toString());
 
         if (payload.type === 'transcript_question') {
-          const { questionText, userId, apiKey, resumeContext, selectedModel } = payload;
-          
+          const { questionText, userId, apiKey, resumeContext, selectedModel, speaker } = payload;
+
           if (!questionText || !questionText.trim()) {
+            return;
+          }
+
+          // Only the interviewer's questions are answered; candidate speech is never sent to the LLM.
+          if (speaker === 'applicant') {
+            console.log(`[Copilot WS] Ignored applicant speech: "${questionText}"`);
             return;
           }
 
@@ -143,9 +149,25 @@ export function setupCopilotWebSocket(server) {
             'what is up', "what's up", 'testing mic', 'audio check', 'testing 1 2 3',
             'one moment', 'give me a second', 'just a minute', 'hang on', 'stand by'
           ];
-          if (setupBlocklist.some(phrase => lowerQ.includes(phrase))) {
+          // A full interviewer turn can hold chatter and a real question ("how are you ... so explain
+          // React hooks"): only drop it when almost nothing is left once the chatter is removed.
+          let remainderQ = normQ;
+          setupBlocklist.forEach((phrase) => {
+            remainderQ = remainderQ.split(phrase).join(' ');
+          });
+          const remainderWords = remainderQ.split(/\s+/).filter(Boolean);
+          if (remainderWords.length !== words.length && remainderWords.length < 3) {
             console.log(`[Copilot WS] Ignored meeting setup chatter: "${cleanQ}"`);
             return;
+          }
+          if (remainderWords.length !== words.length) {
+            // Keep the question, drop the chatter from what is sent to RAG / the LLM
+            setupBlocklist.forEach((phrase) => {
+              const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+              cleanQ = cleanQ.replace(new RegExp(`\\b${escaped}\\b[?.,!]*`, 'gi'), ' ');
+            });
+            cleanQ = cleanQ.replace(/\s+/g, ' ').replace(/^[^a-zA-Z0-9]+/, '').trim();
+            cleanQ = cleanQ.charAt(0).toUpperCase() + cleanQ.slice(1);
           }
 
           // Ignore interviewer pleasantries & casual background chatter ("Thank you", "Good job", etc.)
@@ -182,7 +204,9 @@ export function setupCopilotWebSocket(server) {
             "what i meant", "what i mean", "what i did", "what we did", "what we have",
             "how we solved", "how we handled", "how we built", "why we chose", "why we used"
           ];
-          if (candidateSpeechBlocklist.some(d => lowerQ.includes(d))) {
+          // Skipped for speaker-separated interviewer turns: the source already proves who spoke,
+          // and interviewers say things like "so I am curious how you would...".
+          if (speaker !== 'interviewer' && candidateSpeechBlocklist.some(d => lowerQ.includes(d))) {
             console.log(`[Copilot WS] Ignored candidate speech/self-talk: "${cleanQ}"`);
             return;
           }
@@ -201,13 +225,13 @@ export function setupCopilotWebSocket(server) {
           const abortHandle = { aborted: false };
           currentAbortSignal = abortHandle;
 
-          console.log(`[Copilot WS] Processing Question: "${cleanQ}" [Model: ${selectedModel || 'gemini-1.5-flash'}]`);
+          console.log(`[Copilot WS] Processing Question: "${cleanQ}" [Model: ${selectedModel || 'default'}]`);
 
           // Notify frontend that generation started
           ws.send(JSON.stringify({ type: 'start_generating' }));
 
           // 1. Fetch Database RAG Context
-          const dbContext = await getSessionContext(userId || '00000000-0000-0000-0000-000000000000', questionText, apiKey);
+          const dbContext = await getSessionContext(userId || '00000000-0000-0000-0000-000000000000', cleanQ, apiKey);
           if (abortHandle.aborted) return;
 
           const fullContext = [dbContext, resumeContext ? `[CLIENT RESUME]: ${resumeContext}` : '']
@@ -216,7 +240,7 @@ export function setupCopilotWebSocket(server) {
 
           // 2. Stream tokens back via WebSocket using requested AI Model + Resume RAG synthesis
           await streamCopilotAnswer(
-            questionText,
+            cleanQ,
             fullContext,
             (token) => {
               if (abortHandle.aborted) return;
@@ -230,7 +254,7 @@ export function setupCopilotWebSocket(server) {
               }
             },
             apiKey,
-            selectedModel || 'gemini-1.5-flash'
+            selectedModel
           );
 
           // Notify completion

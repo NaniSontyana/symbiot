@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { DEFAULT_MODEL } from '../lib/models';
 import { Zap, Copy, Check, Sparkles, MessageSquare, Trash2, Bot, User } from 'lucide-react';
 
 function renderFormattedAnswer(text, isGenerating) {
@@ -64,7 +65,7 @@ function CopilotAnswerCard({
   responseText = '',
   isGenerating = false,
   latencyMs = 180,
-  selectedModel = 'gemini-1.5-flash',
+  selectedModel = DEFAULT_MODEL,
   onClearHistory,
   onDeleteTurn
 }) {

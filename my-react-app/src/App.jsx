@@ -6,6 +6,8 @@ import CandidateContextModal from './components/CandidateContextModal';
 import DesktopScreenModal from './components/DesktopScreenModal';
 import FloatingPoint from './components/FloatingPoint';
 import { useAudioStreamer } from './hooks/useAudioStreamer';
+import { createTurnManager } from './lib/turnManager';
+import { DEFAULT_MODEL } from './lib/models';
 import { Send, Play, HelpCircle, RefreshCw, Sparkles } from 'lucide-react';
 
 const SIMILAR_QUESTION_BANKS = {
@@ -90,7 +92,7 @@ export default function App() {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [opacity, setOpacity] = useState(0.85);
   const [bgMode, setBgMode] = useState('transparent');
-  const [selectedModel, setSelectedModel] = useState('gemini-1.5-flash');
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isScreenModalOpen, setIsScreenModalOpen] = useState(false);
 
@@ -196,7 +198,8 @@ export default function App() {
   const switchSpeakerRef = useRef(null);
 
   // Trigger real-time question generation to Copilot engine
-  const handleAskQuestion = useCallback((questionStr) => {
+  // source: 'interviewer' for detected interviewer turns, 'manual' for typed questions
+  const handleAskQuestion = useCallback((questionStr, source = 'manual') => {
     const query = (typeof questionStr === 'string' && questionStr.trim()) ? questionStr.trim() : customQuestion.trim();
     if (!query) return;
 
@@ -221,7 +224,7 @@ export default function App() {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         isGenerating: true,
         latencyMs: newLatency,
-        selectedModel: selectedModel || 'gemini-1.5-flash',
+        selectedModel: selectedModel || DEFAULT_MODEL,
       }
     ]);
 
@@ -231,7 +234,8 @@ export default function App() {
       userId: '00000000-0000-0000-0000-000000000000',
       apiKey: apiKey || null,
       resumeContext: candidateContext || null,
-      selectedModel: selectedModel || 'gemini-1.5-flash',
+      selectedModel: selectedModel || DEFAULT_MODEL,
+      speaker: source === 'interviewer' ? 'interviewer' : 'manual',
     });
 
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
@@ -274,7 +278,14 @@ export default function App() {
       'is my screen visible', 'screen is visible', 'let me share my screen',
       'sharing my screen', 'testing mic', 'audio check', 'testing 1 2 3'
     ];
-    if (setupBlocklist.some(phrase => lower.includes(phrase))) {
+    // A whole interviewer turn can contain setup chatter *and* a real question
+    // ("can you hear me okay, great, so how does React reconcile?"): strip the chatter, keep the rest.
+    let remainder = normalized;
+    setupBlocklist.forEach((phrase) => {
+      remainder = remainder.split(phrase).join(' ');
+    });
+    const remainingWords = remainder.split(/\s+/).filter(Boolean);
+    if (remainingWords.length !== words.length && remainingWords.length < 3) {
       console.log(`[ASR Filter] Dropped setup/meeting chatter: "${cleanText}"`);
       return false;
     }
@@ -385,59 +396,39 @@ export default function App() {
     return text;
   };
 
-  // Smart Speech Accumulator for ASR chunks
-  const pendingQuestionRef = useRef('');
-  const accumulationTimerRef = useRef(null);
-  const pendingClearTimerRef = useRef(null);
-
-  const dispatchAccumulatedQuestion = (text) => {
-    if (!text || !text.trim()) return;
+  // Interviewer turn → AI question. Only complete interviewer turns are answered;
+  // applicant (candidate) speech is used solely to detect that the question has ended.
+  const dispatchInterviewerTurn = (text, meta = {}) => {
     const sanitized = sanitizeQuestionText(text);
-    if (!sanitized || !sanitized.trim()) return;
+    if (!sanitized) return;
 
-    // Strip trailing punctuation before checking dangling prepositions/connectors
-    const unpunct = sanitized.replace(/[?.!;,]+$/g, '').trim();
-    const lowerUnpunct = unpunct.toLowerCase();
-    const wordsUnpunct = lowerUnpunct.split(/\s+/).filter(Boolean);
-
-    const danglingConnectors = [
-      'and', 'or', 'with', 'for', 'in', 'of', 'to', 'about', 'like', 'such as',
-      'between', 'versus', 'compared to', 'using', 'when', 'if', 'how', 'what',
-      'why', 'where', 'which', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-      'the', 'a', 'an', 'and then', 'and now', 'so we', 'let us', 'going to',
-      'ahead and', 'we are', 'kind of', 'type of', 'sort of'
-    ];
-
-    const lastWord = wordsUnpunct[wordsUnpunct.length - 1] || '';
-    const lastTwoWords = wordsUnpunct.slice(-2).join(' ') || '';
-
-    const isDanglingIncomplete = danglingConnectors.includes(lastWord) || danglingConnectors.includes(lastTwoWords);
-
-    if (isDanglingIncomplete) {
-      console.log(`[ASR Accumulator] Sentence is dangling/incomplete ("${sanitized}"). Waiting for interviewer to complete phrase...`);
-      if (pendingClearTimerRef.current) clearTimeout(pendingClearTimerRef.current);
-      pendingClearTimerRef.current = setTimeout(() => {
-        console.log(`[ASR Accumulator] Auto-clearing dangling incomplete phrase ("${pendingQuestionRef.current}")`);
-        pendingQuestionRef.current = '';
-      }, 1200);
-      return;
-    }
-
-    if (pendingClearTimerRef.current) clearTimeout(pendingClearTimerRef.current);
-
-    // Final structural validation before sending complete question to LLM
     if (!isInterviewQuestion(sanitized, 'interviewer')) {
-      console.log(`[ASR Accumulator] Incomplete or non-question speech dropped: "${sanitized}"`);
-      pendingQuestionRef.current = '';
+      console.log(`[Turn Manager] Interviewer turn is not a question, skipped: "${sanitized}"`);
       return;
     }
 
-    console.log(`[Copilot AI Dispatching 100% Complete Question]: "${sanitized}"`);
+    console.log(`[Turn Manager] Interviewer turn complete (${meta.reason || 'pause'}) -> AI: "${sanitized}"`);
     if (handleAskQuestionRef.current) {
-      handleAskQuestionRef.current(sanitized);
+      handleAskQuestionRef.current(sanitized, 'interviewer');
     }
-    pendingQuestionRef.current = '';
   };
+
+  const dispatchInterviewerTurnRef = useRef(dispatchInterviewerTurn);
+  useEffect(() => {
+    dispatchInterviewerTurnRef.current = dispatchInterviewerTurn;
+  });
+
+  const turnManagerRef = useRef(null);
+  useEffect(() => {
+    const manager = createTurnManager({
+      onInterviewerTurn: (text, meta) => dispatchInterviewerTurnRef.current(text, meta),
+    });
+    turnManagerRef.current = manager;
+    return () => {
+      manager.dispose();
+      turnManagerRef.current = null;
+    };
+  }, []);
 
   // Audio streamer hook for direct mic ASR connection
   const {
@@ -453,41 +444,30 @@ export default function App() {
     micError,
     activeSpeaker,
     switchSpeaker,
-    resetAsrBuffer,
+    asrStatus,
+    speakerMode,
+    setSpeakerMode,
+    diarStatus,
+    assignLastSpeaker,
     audioDevices,
     selectedMicId,
     switchMicrophone
   } = useAudioStreamer(
     'ws://localhost:8000/ws/transcribe',
-    (detectedText, speaker) => {
-      if (detectedText) {
+    (detectedText, speaker, engine, isFinal = true) => {
+      if (isFinal && detectedText) {
         console.log(`[ASR Speech Output] [${speaker}]: "${detectedText}"`);
-
-        // Clean all unnecessary filler words ("thank you", "good job", "thanks", etc.) BEFORE recording into buffer
-        const cleanChunk = cleanUnnecessaryWords(detectedText);
-        if (!cleanChunk) return;
-
-        const combined = (pendingQuestionRef.current + ' ' + cleanChunk).trim();
-        pendingQuestionRef.current = combined;
-
-        if (accumulationTimerRef.current) clearTimeout(accumulationTimerRef.current);
-
-        // Require a 500ms complete silence pause after speech before dispatching complete question
-        accumulationTimerRef.current = setTimeout(() => {
-          dispatchAccumulatedQuestion(pendingQuestionRef.current);
-        }, 500);
       }
+      // Interviewer text is cleaned of pleasantries ("thank you", "hello") before it can join a question;
+      // an empty final still marks the end of the interviewer's utterance.
+      const text = speaker === 'interviewer' && isFinal ? cleanUnnecessaryWords(detectedText) : detectedText;
+      if (turnManagerRef.current) turnManagerRef.current.handleTranscript({ speaker, text, isFinal });
     }
   );
 
   useEffect(() => {
     switchSpeakerRef.current = switchSpeaker;
   }, [switchSpeaker]);
-
-  const resetAsrBufferRef = useRef(resetAsrBuffer);
-  useEffect(() => {
-    resetAsrBufferRef.current = resetAsrBuffer;
-  }, [resetAsrBuffer]);
 
   // Auto-start microphone streaming on application load
   useEffect(() => {
@@ -571,7 +551,6 @@ export default function App() {
                 });
                 return updated;
               });
-              if (resetAsrBufferRef.current) resetAsrBufferRef.current();
             }
           } catch (err) {
             console.error('[Copilot WS] Parse error:', err);
@@ -692,6 +671,12 @@ export default function App() {
               setBgMode={setBgMode}
               activeSpeaker={activeSpeaker}
               onSwitchSpeaker={switchSpeaker}
+              isSystemAudioActive={isSystemAudioActive}
+              asrStatus={asrStatus}
+              speakerMode={speakerMode}
+              onChangeSpeakerMode={setSpeakerMode}
+              diarStatus={diarStatus}
+              onAssignLastSpeaker={assignLastSpeaker}
               audioDevices={audioDevices}
               selectedMicId={selectedMicId}
               onSwitchMicrophone={switchMicrophone}
