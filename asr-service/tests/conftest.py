@@ -1,0 +1,75 @@
+import os
+import sys
+from dataclasses import dataclass, field
+from typing import List
+
+import numpy as np
+import pytest
+
+SERVICE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if SERVICE_ROOT not in sys.path:
+    sys.path.insert(0, SERVICE_ROOT)
+
+os.environ.setdefault("ASR_SKIP_MODEL_LOAD", "1")
+
+from services.parakeet_eou_engine import StepResult  # noqa: E402
+
+CHUNK_SAMPLES = 1280
+CHUNK_BYTES = CHUNK_SAMPLES * 2
+
+
+@dataclass
+class FakeState:
+    id: int
+    steps: int = 0
+    resets: int = 0
+
+
+@dataclass
+class FakeEngine:
+    """Drop-in stand-in for ParakeetEOUEngine that replays scripted step results."""
+
+    script: List[StepResult] = field(default_factory=list)
+    chunk_samples: int = CHUNK_SAMPLES
+    sample_rate: int = 16000
+    engine_type: str = "parakeet_realtime_eou_120m-v1"
+    model_name: str = "fake"
+    device: str = "cpu"
+    is_ready: bool = True
+    load_error: str = None
+
+    def __post_init__(self):
+        self.calls = []  # (state_id, samples)
+        self.states = []
+
+    def create_stream_state(self):
+        state = FakeState(id=len(self.states))
+        self.states.append(state)
+        return state
+
+    def reset_stream_state(self, state):
+        state.steps = 0
+        state.resets += 1
+
+    def step(self, state, samples):
+        assert samples.shape == (self.chunk_samples,)
+        assert samples.dtype == np.float32
+        self.calls.append((state.id, samples))
+        state.steps += 1
+        if self.script:
+            return self.script.pop(0)
+        return StepResult(text="", is_eou=False)
+
+
+def speech_chunk(amplitude: float = 0.3) -> bytes:
+    t = np.arange(CHUNK_SAMPLES) / 16000
+    return (amplitude * np.sin(2 * np.pi * 220 * t) * 32767).astype(np.int16).tobytes()
+
+
+def silence_chunk() -> bytes:
+    return np.zeros(CHUNK_SAMPLES, dtype=np.int16).tobytes()
+
+
+@pytest.fixture
+def fake_engine():
+    return FakeEngine()

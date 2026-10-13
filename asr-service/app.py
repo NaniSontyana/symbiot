@@ -1,16 +1,68 @@
 import os
 import json
-import logging
+import time
 import asyncio
+import logging
+import threading
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+
+from services.parakeet_eou_engine import DEFAULT_MODEL_NAME, ParakeetEOUEngine
+from services.transcriber import ChannelTranscriber, TranscriberConfig
 from services.vad import VoiceActivityDetector
-from services.transcriber import ParakeetTranscriber
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("asr_app")
 
-app = FastAPI(title="Symbiot ASR Streaming Microservice")
+CHANNELS = ("interviewer", "applicant")
+CHANNEL_HEADERS = {0x01: "interviewer", 0x02: "applicant"}
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, default))
+    except ValueError:
+        return default
+
+
+def build_engine() -> ParakeetEOUEngine:
+    return ParakeetEOUEngine(
+        model_name=os.getenv("ASR_MODEL", DEFAULT_MODEL_NAME),
+        device=os.getenv("ASR_DEVICE") or None,  # default: cuda if available, else cpu
+    )
+
+
+def build_transcriber_config() -> TranscriberConfig:
+    return TranscriberConfig(
+        input_gain=_env_float("ASR_INPUT_GAIN", 1.0),
+        emit_partials=os.getenv("ASR_EMIT_PARTIALS", "1") != "0",
+    )
+
+
+def build_vad() -> VoiceActivityDetector:
+    return VoiceActivityDetector(base_energy_threshold=_env_float("ASR_VAD_ENERGY_THRESHOLD", 0.000003))
+
+
+# Shared model (weights only). All per-stream state lives in ChannelTranscriber instances.
+engine = build_engine()
+
+
+def _load_engine_in_background() -> None:
+    if engine.is_ready:
+        return
+    threading.Thread(target=engine.load, name="parakeet-loader", daemon=True).start()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    if os.getenv("ASR_SKIP_MODEL_LOAD") != "1":
+        _load_engine_in_background()
+    yield
+
+
+app = FastAPI(title="Symbiot ASR Streaming Microservice", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,29 +72,75 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-interviewer_vad = VoiceActivityDetector()
-applicant_vad = VoiceActivityDetector()
-transcriber = ParakeetTranscriber(model_name="nvidia/parakeet-realtime-eou-120m-v1")
+
+def _engine_status() -> str:
+    if engine.is_ready:
+        return "ready"
+    if engine.load_error:
+        return "error"
+    return "loading"
+
 
 @app.get("/health")
 def health_check():
+    status = _engine_status()
     return {
-        "status": "healthy",
+        "status": "healthy" if status == "ready" else "degraded",
         "service": "symbiot-asr-service",
-        "engine": getattr(transcriber, "engine_type", "parakeet-realtime-eou-120m-v1")
+        "engine": engine.engine_type,
+        "model": engine.model_name,
+        "model_status": status,
+        "device": str(engine.device) if engine.device is not None else None,
+        "error": engine.load_error,
     }
+
 
 @app.websocket("/ws/transcribe")
 async def websocket_transcribe(websocket: WebSocket):
     await websocket.accept()
     logger.info("[ASR WS] Client connected to real-time dual-channel speech pipeline")
-    
-    interviewer_buffer = bytearray()
-    applicant_buffer = bytearray()
-    MAX_BUFFER_SIZE = 16000 * 2 * 10
+
+    # Per-connection state: one independent streaming transcriber per speaker channel.
+    transcribers = {}
     active_speaker = "interviewer"
-    
-    chunk_counter = 0
+    last_status_sent = None
+    stats = {"chunks": 0, "proc_s": 0.0, "audio_s": 0.0}
+
+    async def send_json(payload) -> bool:
+        try:
+            await websocket.send_json(payload)
+            return True
+        except Exception as send_err:
+            logger.info(f"[ASR WS] Client disconnected before send: {send_err}")
+            return False
+
+    async def announce_status():
+        nonlocal last_status_sent
+        status = _engine_status()
+        if status != last_status_sent:
+            last_status_sent = status
+            await send_json({"type": "asr_status", "status": status, "message": engine.load_error})
+
+    def get_transcriber(channel: str) -> ChannelTranscriber:
+        if channel not in transcribers:
+            transcribers[channel] = ChannelTranscriber(
+                engine, channel, config=build_transcriber_config(), vad=build_vad()
+            )
+        return transcribers[channel]
+
+    async def emit(events, channel: str):
+        for event in events:
+            await send_json({
+                "type": "transcript_chunk" if event.is_final else "transcript_partial",
+                "text": event.text,
+                "speaker": channel,
+                "engine": engine.engine_type,
+                "is_final": event.is_final,
+                "reason": event.reason,
+            })
+
+    await announce_status()
+
     try:
         while True:
             message = await websocket.receive()
@@ -50,85 +148,62 @@ async def websocket_transcribe(websocket: WebSocket):
                 logger.info("[ASR WS] Client disconnected cleanly")
                 break
 
-            if "bytes" in message and message["bytes"]:
-                raw_bytes = message["bytes"]
-                if len(raw_bytes) == 0:
-                    continue
-
-                chunk_counter += 1
-
-                # Check channel header prefix (0x01 = Interviewer / System, 0x02 = Applicant / Mic)
-                if raw_bytes[0] in (0x01, 0x02):
-                    channel = "interviewer" if raw_bytes[0] == 0x01 else "applicant"
+            raw_bytes = message.get("bytes")
+            if raw_bytes:
+                # Channel header prefix (0x01 = Interviewer / System, 0x02 = Applicant / Mic)
+                if raw_bytes[0] in CHANNEL_HEADERS:
+                    channel = CHANNEL_HEADERS[raw_bytes[0]]
                     chunk_bytes = raw_bytes[1:]
                 else:
                     channel = active_speaker
                     chunk_bytes = raw_bytes
 
-                target_buffer = interviewer_buffer if channel == "interviewer" else applicant_buffer
-                target_vad = interviewer_vad if channel == "interviewer" else applicant_vad
+                if not engine.is_ready:
+                    await announce_status()  # audio is dropped until the model is ready
+                    continue
+                await announce_status()
 
-                # Always buffer incoming audio bytes to prevent audio loss
-                target_buffer.extend(chunk_bytes)
+                transcriber = get_transcriber(channel)
+                started = time.perf_counter()
+                events = await asyncio.to_thread(transcriber.feed, chunk_bytes)
+                stats["proc_s"] += time.perf_counter() - started
+                stats["audio_s"] += len(chunk_bytes) / 2 / engine.sample_rate
+                stats["chunks"] += 1
+                if stats["chunks"] % 200 == 0 and stats["audio_s"] > 0:
+                    logger.info(
+                        f"[ASR WS] {stats['chunks']} packets, real-time factor "
+                        f"{stats['proc_s'] / stats['audio_s']:.3f}"
+                    )
+                await emit(events, channel)
+                continue
 
-                # Evaluate Voice Activity Detection (VAD) independently per channel
-                has_speech = target_vad.is_speech(chunk_bytes)
-                
-                if chunk_counter % 25 == 0:
-                    chunk_energy = target_vad.calculate_energy(chunk_bytes)
-                    logger.info(f"[ASR WS Receiver] Chunk #{chunk_counter}: {len(chunk_bytes)}B | channel={channel} | energy={chunk_energy:.8f} | speech={has_speech} | buf_len={len(target_buffer)}")
-                
-                # Transcribe when pause detected (utterance complete) OR buffer reaches ~1s of audio (32,000 bytes)
-                should_transcribe = (target_vad.is_utterance_complete() and len(target_buffer) >= 4800) or (len(target_buffer) >= 32000)
-
-                if should_transcribe:
-                    res = await asyncio.to_thread(transcriber.process_audio_buffer, bytes(target_buffer), channel)
-                    transcript_text, engine_used = res if isinstance(res, tuple) else (res, "parakeet-realtime-eou-120m-v1")
-                    if transcript_text:
-                        logger.info(f"[ASR WS] Transcribed [{channel}] [{engine_used}]: '{transcript_text}'")
-                        try:
-                            await websocket.send_json({
-                                "type": "transcript_chunk",
-                                "text": transcript_text,
-                                "speaker": channel,
-                                "engine": engine_used,
-                                "is_final": True
-                            })
-                        except Exception as send_err:
-                            logger.info(f"[ASR WS] Client disconnected before transcript send: {send_err}")
-                        target_buffer.clear()
-                        target_vad.reset()
-                    else:
-                        # Clear evaluated buffer to keep latency low
-                        if target_vad.is_utterance_complete() or len(target_buffer) >= 32000:
-                            target_buffer.clear()
-                            target_vad.reset()
-            elif "text" in message and message["text"]:
+            text = message.get("text")
+            if text:
                 try:
-                    payload = json.loads(message["text"])
-                    if payload.get("type") == "set_speaker":
-                        active_speaker = payload.get("speaker", "interviewer")
-                        logger.info(f"[ASR WS] Manual fallback speaker set to: '{active_speaker}'")
-                    elif payload.get("type") == "reset_buffer":
-                        interviewer_buffer.clear()
-                        applicant_buffer.clear()
-                        interviewer_vad.reset()
-                        applicant_vad.reset()
-                        logger.info("[ASR WS] ⚡ Audio buffers flushed & VAD reset. Ready for next question!")
+                    payload = json.loads(text)
                 except Exception:
-                    pass
-
-            # Prevent memory overflow
-            if len(interviewer_buffer) > MAX_BUFFER_SIZE:
-                interviewer_buffer.clear()
-            if len(applicant_buffer) > MAX_BUFFER_SIZE:
-                applicant_buffer.clear()
+                    continue
+                msg_type = payload.get("type")
+                if msg_type == "set_speaker":
+                    requested = payload.get("speaker", "interviewer")
+                    active_speaker = requested if requested in CHANNELS else "interviewer"
+                    logger.info(f"[ASR WS] Manual fallback speaker set to: '{active_speaker}'")
+                elif msg_type == "reset_buffer":
+                    for transcriber in transcribers.values():
+                        await asyncio.to_thread(transcriber.reset)
+                    logger.info("[ASR WS] Audio buffers & streaming state reset. Ready for next question!")
+                elif msg_type == "flush":
+                    for channel, transcriber in list(transcribers.items()):
+                        await emit(await asyncio.to_thread(transcriber.flush), channel)
 
     except WebSocketDisconnect:
         logger.info("[ASR WS] Client disconnected")
     except Exception as e:
-        logger.error(f"[ASR WS] Error: {e}")
+        logger.exception(f"[ASR WS] Error: {e}")
+    finally:
+        transcribers.clear()
+
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
