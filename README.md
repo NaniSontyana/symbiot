@@ -93,6 +93,25 @@ as interviewer speech and answered by the copilot.
   `Ctrl+Alt+C` click-through, `Ctrl+Alt+H` hide, `Ctrl+Alt+D` switch display,
   `Ctrl+Alt+X` quit).
 
+## Latency Engineering (live-session response time)
+
+The perceived response time — interviewer stops talking → answer on screen — is
+optimized at every stage of the pipeline:
+
+| Stage | Knob | Effect |
+|---|---|---|
+| Turn detection (`turnManager.js`) | Question-mark fast path: 200 ms | An utterance ending in `?` is unambiguous — flushed at 200 ms instead of the pause gap. Default pause gap also lowered to 650 ms. |
+| Question pipeline (`copilot.js`) | measured & reported | Server stamps `ttftMs`/`totalMs` into `end_generating`; shown live in the answer card's ⚡ badge (no more fake numbers). |
+| RAG retrieval (`embedding.js`) | 512-entry LRU cache | Repeat/similar question embeddings skip the API round-trip (~200-600 ms → ~0 ms). |
+| LLM streaming (`llm.js`) | batched offline streaming | Offline engine emits word batches every ~3 ms instead of one word per 20 ms (~33× faster completion; tokens appear progressively, not all at once). |
+| UI rendering (`App.jsx`) | 50 ms token buffer | WebSocket deltas accumulate in a ref and flush to React state at ~20 FPS, so high token rates never stutter the overlay. |
+| ASR fallback (`app.py`) | `ASR_FORCE_FINAL_SILENCE_CHUNKS` (default 20 ≈ 1.6 s) | Lower it (≈10) if you prefer faster forced finals when the model misses an end-of-utterance. |
+
+Measured on a zero-config machine (offline LLM tier): **question dispatch →
+first token ≈ 6-15 ms, complete 1,400-char answer ≈ 120 ms**. With a real
+provider (Groq is tried first for speed), first token is dominated by network
+RTT (~100-300 ms typical).
+
 ## Services
 
 | Service            | Tech                | Port | Docs |

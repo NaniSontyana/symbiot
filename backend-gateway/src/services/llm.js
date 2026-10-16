@@ -1073,10 +1073,16 @@ export async function executeTask(payload) {
 3. **Trade-offs**: Trade off initial setup complexity for long-term maintainability, testability, and deterministic error handling.`;
   }
 
-  const tokens = dynamicAnswer.split(' ');
-  for (let i = 0; i < tokens.length; i++) {
-    const word = tokens[i] + (i === tokens.length - 1 ? '' : ' ');
-    onChunk(word);
-    await new Promise((res) => setTimeout(res, 20));
+  // Batched streaming: emit small word groups with micro-delays so the overlay
+  // shows a smooth typing effect while the full answer lands in ~0.5 s instead
+  // of the old word-at-a-time pacing (20 ms/word ≈ 4-8 s for full answers).
+  const words = dynamicAnswer.split(' ');
+  const BATCH_WORDS = 6;
+  for (let i = 0; i < words.length; i += BATCH_WORDS) {
+    const batch = words.slice(i, i + BATCH_WORDS).join(' ');
+    onChunk(batch + (i + BATCH_WORDS < words.length ? ' ' : ''));
+    if (i + BATCH_WORDS < words.length) {
+      await new Promise((res) => setTimeout(res, 3));
+    }
   }
 }

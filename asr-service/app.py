@@ -69,6 +69,11 @@ def build_transcriber_config() -> TranscriberConfig:
     return TranscriberConfig(
         input_gain=_env_float("ASR_INPUT_GAIN", 1.0),
         emit_partials=os.getenv("ASR_EMIT_PARTIALS", "1") != "0",
+        # Fallback when the model misses its EOU token: finalize an utterance
+        # after this many silent 80 ms chunks (default 20 ~= 1.6 s). Lower it
+        # (e.g. 10 ~= 0.8 s) for snappier question detection at the cost of
+        # occasionally splitting slow speech.
+        force_final_silence_chunks=_env_int("ASR_FORCE_FINAL_SILENCE_CHUNKS", 20),
     )
 
 

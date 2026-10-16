@@ -183,7 +183,29 @@ export default function App() {
   const [activeQuestion, setActiveQuestion] = useState('');
   const [responseText, setResponseText] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [latencyMs, setLatencyMs] = useState(180);
+  // Real measured time-to-first-token; shown live in the answer card badge
+  const [latencyMs, setLatencyMs] = useState(null);
+
+  // Streaming token buffer: WebSocket deltas are appended here and flushed to
+  // React state at ~20 FPS, so hundreds of tokens/s never re-render per token.
+  const tokenBufferRef = useRef('');
+  const tokenFlushTimerRef = useRef(null);
+  const questionSentAtRef = useRef(0); // performance.now() when question was dispatched
+  const firstTokenSeenRef = useRef(false);
+
+  const flushTokenBuffer = useCallback(() => {
+    tokenFlushTimerRef.current = null;
+    if (!tokenBufferRef.current) return;
+    const chunk = tokenBufferRef.current;
+    tokenBufferRef.current = '';
+    setResponseText((prev) => prev + chunk);
+  }, []);
+
+  const scheduleTokenFlush = useCallback(() => {
+    if (tokenFlushTimerRef.current === null) {
+      tokenFlushTimerRef.current = setTimeout(flushTokenBuffer, 50);
+    }
+  }, [flushTokenBuffer]);
   const [conversationHistory, setConversationHistory] = useState([]);
   // Rotating question-bank seed: each "Generate Similar" press cycles the bank
   // merged with the topic-tailored suggestions derived from the active question.
@@ -255,12 +277,15 @@ export default function App() {
     }
 
     const newItemId = Date.now();
-    const newLatency = Math.floor(Math.random() * 40) + 160;
+
+    questionSentAtRef.current = performance.now();
+    firstTokenSeenRef.current = false;
+    tokenBufferRef.current = '';
 
     setActiveQuestion(query);
     setResponseText('');
     setIsGenerating(true);
-    setLatencyMs(newLatency);
+    setLatencyMs(null);
 
     setConversationHistory((prev) => [
       ...prev,
@@ -270,7 +295,8 @@ export default function App() {
         answer: '',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         isGenerating: true,
-        latencyMs: newLatency,
+        latencyMs: null,
+        totalMs: null,
         selectedModel: selectedModel || DEFAULT_MODEL,
       }
     ]);
@@ -578,11 +604,27 @@ export default function App() {
           try {
             const data = JSON.parse(event.data);
             if (data.type === 'start_generating') {
+              tokenBufferRef.current = '';
               setIsGenerating(true);
               setResponseText('');
             } else if (data.type === 'token_delta') {
-              setResponseText((prev) => prev + data.token);
+              if (!firstTokenSeenRef.current) {
+                firstTokenSeenRef.current = true;
+                // Real time-to-first-token for the live latency badge
+                setLatencyMs(Math.max(1, Math.round(performance.now() - questionSentAtRef.current)));
+              }
+              tokenBufferRef.current += data.token;
+              scheduleTokenFlush();
             } else if (data.type === 'end_generating') {
+              // Server-measured latency wins when available (immune to client clock jitter)
+              const ttft = typeof data.ttftMs === 'number' ? data.ttftMs : null;
+              const total = typeof data.totalMs === 'number' ? data.totalMs : null;
+              if (ttft !== null) setLatencyMs(ttft);
+              if (tokenFlushTimerRef.current !== null) {
+                clearTimeout(tokenFlushTimerRef.current);
+                tokenFlushTimerRef.current = null;
+              }
+              flushTokenBuffer();
               setIsGenerating(false);
               setConversationHistory((prev) => {
                 if (prev.length === 0) return prev;
@@ -593,7 +635,9 @@ export default function App() {
                   updated[lastIdx] = {
                     ...updated[lastIdx],
                     answer: finalText,
-                    isGenerating: false
+                    isGenerating: false,
+                    latencyMs: ttft,
+                    totalMs: total,
                   };
                   return finalText;
                 });
@@ -624,11 +668,15 @@ export default function App() {
 
     return () => {
       if (timerId) clearTimeout(timerId);
+      if (tokenFlushTimerRef.current !== null) {
+        clearTimeout(tokenFlushTimerRef.current);
+        tokenFlushTimerRef.current = null;
+      }
       if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
         socketRef.current.close();
       }
     };
-  }, []);
+  }, [flushTokenBuffer, scheduleTokenFlush]);
 
   const handleMouseEnterInteractive = () => {
     if (clickThrough && window.electronAPI && window.electronAPI.setIgnoreMouseEvents) {

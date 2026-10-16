@@ -225,12 +225,15 @@ export function setupCopilotWebSocket(server) {
           const abortHandle = { aborted: false };
           currentAbortSignal = abortHandle;
 
+          const requestStartedAt = Date.now();
+          let firstTokenAt = 0;
+
           console.log(`[Copilot WS] Processing Question: "${cleanQ}" [Model: ${selectedModel || 'default'}]`);
 
           // Notify frontend that generation started
           ws.send(JSON.stringify({ type: 'start_generating' }));
 
-          // 1. Fetch Database RAG Context
+          // 1. Fetch Database RAG Context (embedding cache makes repeats near-instant)
           const dbContext = await getSessionContext(userId || '00000000-0000-0000-0000-000000000000', cleanQ, apiKey);
           if (abortHandle.aborted) return;
 
@@ -244,6 +247,7 @@ export function setupCopilotWebSocket(server) {
             fullContext,
             (token) => {
               if (abortHandle.aborted) return;
+              if (!firstTokenAt) firstTokenAt = Date.now();
               if (ws.readyState === ws.OPEN) {
                 ws.send(
                   JSON.stringify({
@@ -257,9 +261,12 @@ export function setupCopilotWebSocket(server) {
             selectedModel
           );
 
-          // Notify completion
+          // Notify completion (with real measured latency for the UI badge)
           if (!abortHandle.aborted && ws.readyState === ws.OPEN) {
-            ws.send(JSON.stringify({ type: 'end_generating' }));
+            const totalMs = Date.now() - requestStartedAt;
+            const ttftMs = (firstTokenAt || Date.now()) - requestStartedAt;
+            console.log(`[Copilot WS] Answer done — TTFT ${ttftMs}ms, total ${totalMs}ms`);
+            ws.send(JSON.stringify({ type: 'end_generating', ttftMs, totalMs }));
           }
         }
       } catch (err) {

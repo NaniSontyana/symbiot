@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
 import { docsVectorSearch, docsLatest, DEMO_USER_ID } from '../config/store.js';
@@ -5,13 +6,54 @@ import { docsVectorSearch, docsLatest, DEMO_USER_ID } from '../config/store.js';
 dotenv.config();
 
 /**
+ * Embedding LRU cache. Interviews repeat vocabulary and questions, so a warm
+ * cache turns the Gemini embedding round-trip (~200-600 ms) into a memory hit.
+ */
+const EMBEDDING_CACHE_MAX = 512;
+const embeddingCache = new Map();
+
+function cacheKeyFor(text, keyHint) {
+  return crypto
+    .createHash('sha1')
+    .update(keyHint ? 'keyed' : 'mock')
+    .update('\n')
+    .update(text)
+    .digest('hex');
+}
+
+export function clearEmbeddingCache() {
+  embeddingCache.clear();
+}
+
+/**
  * Generate a 384-dimensional embedding for a text document chunk.
  * Falls back to a deterministic normalized mock vector when no API key is configured.
  */
 export async function generateEmbedding(text, customApiKey = null) {
   const activeKey = customApiKey || process.env.GEMINI_API_KEY;
+  const hasLiveKey = !!activeKey && activeKey !== 'your_gemini_api_key_here' && !activeKey.startsWith('AQ.');
 
-  if (!activeKey || activeKey === 'your_gemini_api_key_here' || activeKey.startsWith('AQ.')) {
+  const cacheKey = cacheKeyFor(text, hasLiveKey);
+  const cached = embeddingCache.get(cacheKey);
+  if (cached) {
+    // Refresh LRU recency
+    embeddingCache.delete(cacheKey);
+    embeddingCache.set(cacheKey, cached);
+    return cached;
+  }
+
+  const vector = await computeEmbedding(text, activeKey, hasLiveKey);
+
+  embeddingCache.set(cacheKey, vector);
+  if (embeddingCache.size > EMBEDDING_CACHE_MAX) {
+    // Evict least-recently-used entry (Map iteration order = insertion order)
+    embeddingCache.delete(embeddingCache.keys().next().value);
+  }
+  return vector;
+}
+
+async function computeEmbedding(text, activeKey, hasLiveKey) {
+  if (!hasLiveKey) {
     // Return mock 384-dim normalized vector if API key is not configured
     return createNormalizedMockVector(text, 384);
   }
