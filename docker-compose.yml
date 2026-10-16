@@ -1,0 +1,22 @@
+# Convenience database container: PostgreSQL 16 with the pgvector extension.
+# After `docker compose up db`, run `npm run db:init` inside backend-gateway.
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: symbiot-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: parakeet_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - symbiot_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d parakeet_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  symbiot_pgdata:

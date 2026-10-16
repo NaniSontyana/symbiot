@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { GEMINI_MODELS } from '../lib/models';
-import { Mic, MicOff, Radio, Bot, Eye, ChevronDown, Volume2, User } from 'lucide-react';
+import { Mic, MicOff, Radio, Eye, Volume2, User } from 'lucide-react';
 
 const chipStyle = (active) => ({
   padding: '4px 10px',
@@ -31,8 +31,6 @@ function AudioVisualizer({
   setSelectedModel,
   opacity,
   setOpacity,
-  bgMode,
-  setBgMode,
   activeSpeaker = 'interviewer',
   onSwitchSpeaker,
   isSystemAudioActive = false,
@@ -46,7 +44,6 @@ function AudioVisualizer({
   onSwitchMicrophone,
   isSwitchingMic = false
 }) {
-  const [showModelMenu, setShowModelMenu] = useState(false);
   const [showOpacitySlider, setShowOpacitySlider] = useState(false);
 
   const opacityPresets = [0.35, 0.6, 0.85, 1.0];

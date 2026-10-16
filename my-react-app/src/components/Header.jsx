@@ -1,8 +1,10 @@
 import React from 'react';
-import { Shield, Wifi, WifiOff, Settings, Minimize2, X, MousePointerClick, Monitor } from 'lucide-react';
+import { Shield, Wifi, WifiOff, Settings, Minimize2, X, MousePointerClick, Monitor, LogOut } from 'lucide-react';
 import SymbiotLogo from './SymbiotLogo';
 
 function Header({
+  currentUser,
+  onLogout,
   isConnected,
   stealthMode,
   setStealthMode,
@@ -61,9 +63,68 @@ function Header({
 
       {/* 2. Right System Action Controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', WebkitAppRegion: 'no-drag' }}>
+        {/* Signed-in Account Pill */}
+        {currentUser && (
+          <div
+            title={`${currentUser.username || 'Account'} <${currentUser.email || ''}>`}
+            style={{
+              height: '26px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '0 8px',
+              borderRadius: '6px',
+              background: '#171717',
+              border: '1px solid #333333',
+              fontSize: '0.7rem',
+              fontWeight: 600,
+              color: '#e5e5e5',
+              maxWidth: '150px'
+            }}
+          >
+            <span
+              style={{
+                width: '16px',
+                height: '16px',
+                borderRadius: '50%',
+                background: currentUser.demo ? '#3f3f46' : '#ffffff',
+                color: currentUser.demo ? '#d4d4d8' : '#0a0a0a',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '0.6rem',
+                fontWeight: 800,
+                flexShrink: 0
+              }}
+            >
+              {(currentUser.username || '?').charAt(0).toUpperCase()}
+            </span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {currentUser.username || 'Account'}
+            </span>
+            {onLogout && !currentUser.demo && (
+              <button
+                onClick={onLogout}
+                title="Sign out"
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  color: '#a3a3a3'
+                }}
+              >
+                <LogOut size={11} />
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Connection Status Pill */}
         <div 
-          title={isConnected ? "Copilot Gateway Online (ws://localhost:5000)" : "Copilot Gateway Offline"}
+          title={isConnected ? "Copilot Gateway Online" : "Copilot Gateway Offline — retrying…"}
           style={{
             height: '26px',
             display: 'flex',

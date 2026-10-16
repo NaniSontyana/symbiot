@@ -174,3 +174,17 @@ html, body {
   0% { opacity: 0.3; transform: scale(0.85); }
   100% { opacity: 1; transform: scale(1.15); }
 }
+
+/* Loading spinners (auth screen, upload progress) */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}

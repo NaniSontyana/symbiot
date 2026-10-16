@@ -4,7 +4,6 @@ import SymbiotLogo from './SymbiotLogo';
 
 function FloatingPoint({ onExpand, onExitApp, isGenerating, isStreaming, stealthMode }) {
   const [position, setPosition] = useState({ x: 24, y: 24 });
-  const [isDragging, setIsDragging] = useState(false);
   const isMovedRef = useRef(false);
   const startPosRef = useRef({ startX: 0, startY: 0, initialX: 24, initialY: 24 });
 
@@ -19,8 +18,6 @@ function FloatingPoint({ onExpand, onExitApp, isGenerating, isStreaming, stealth
       initialX: position.x,
       initialY: position.y,
     };
-
-    setIsDragging(true);
 
     const onMouseMove = (moveEvent) => {
       const deltaX = moveEvent.clientX - startPosRef.current.startX;
@@ -37,7 +34,6 @@ function FloatingPoint({ onExpand, onExitApp, isGenerating, isStreaming, stealth
     };
 
     const onMouseUp = () => {
-      setIsDragging(false);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };

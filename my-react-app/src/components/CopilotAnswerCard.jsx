@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { DEFAULT_MODEL } from '../lib/models';
-import { Zap, Copy, Check, Sparkles, MessageSquare, Trash2, Bot, User } from 'lucide-react';
+import { Zap, Copy, Check, Sparkles, Trash2, Bot, User } from 'lucide-react';
 
 function renderFormattedAnswer(text, isGenerating) {
   if (!text) return null;

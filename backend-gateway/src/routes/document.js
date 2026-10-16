@@ -1,8 +1,8 @@
 import express from 'express';
 import multer from 'multer';
 import { createRequire } from 'module';
-import pool from '../config/db.js';
 import { generateEmbedding } from '../services/embedding.js';
+import { docsDeleteByFilename, docsInsertChunk, docsListGrouped, DEMO_USER_ID } from '../config/store.js';
 
 const require = createRequire(import.meta.url);
 const rawPdfParse = require('pdf-parse');
@@ -23,6 +23,30 @@ function chunkText(text, chunkSize = 500, overlap = 50) {
   return chunks;
 }
 
+async function indexDocument({ userId, docType, filename, text, apiKey }) {
+  const chunks = chunkText(text);
+  const savedChunks = [];
+  const targetUserId = userId || DEMO_USER_ID;
+
+  // Clear existing chunks of this name for clean re-indexing
+  await docsDeleteByFilename(targetUserId, filename);
+
+  for (let index = 0; index < chunks.length; index++) {
+    const chunkStr = chunks[index];
+    const embeddingVec = await generateEmbedding(chunkStr, apiKey);
+    const saved = await docsInsertChunk({
+      userId: targetUserId,
+      docType,
+      filename,
+      chunkText: chunkStr,
+      chunkIndex: index + 1,
+      embedding: embeddingVec,
+    });
+    savedChunks.push(saved);
+  }
+  return savedChunks;
+}
+
 // Upload Text snippet (Resume / JD)
 router.post('/upload-text', async (req, res) => {
   const { userId, docType, chunkText: text, apiKey } = req.body;
@@ -32,27 +56,13 @@ router.post('/upload-text', async (req, res) => {
   }
 
   try {
-    const chunks = chunkText(text);
-    const savedChunks = [];
-    const targetUserId = userId || '00000000-0000-0000-0000-000000000000';
-
-    // Clear existing manual input for clean re-indexing
-    await pool.query(`DELETE FROM documents WHERE filename = 'manual_input.txt' AND user_id = $1`, [targetUserId]);
-
-    for (let index = 0; index < chunks.length; index++) {
-      const chunkStr = chunks[index];
-      const embeddingVec = await generateEmbedding(chunkStr, apiKey);
-      const vectorVal = JSON.stringify(embeddingVec);
-
-      const result = await pool.query(
-        `INSERT INTO documents (user_id, doc_type, filename, chunk_text, chunk_index, embedding) 
-         VALUES ($1, $2, $3, $4, $5, $6) 
-         RETURNING id, doc_type, chunk_text, chunk_index`,
-        [targetUserId, docType, 'manual_input.txt', chunkStr, index + 1, vectorVal]
-      );
-      savedChunks.push(result.rows[0]);
-    }
-
+    const savedChunks = await indexDocument({
+      userId,
+      docType,
+      filename: 'manual_input.txt',
+      text,
+      apiKey,
+    });
     res.status(201).json({
       message: `Successfully indexed ${savedChunks.length} document chunks with vector embeddings`,
       chunkCount: savedChunks.length,
@@ -87,26 +97,13 @@ router.post('/upload-file', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'Could not extract text from document' });
     }
 
-    const chunks = chunkText(extractedText);
-    const savedChunks = [];
-    const targetUserId = userId || '00000000-0000-0000-0000-000000000000';
-
-    // Remove old chunks of same filename to prevent duplicate indexing
-    await pool.query(`DELETE FROM documents WHERE filename = $1 AND user_id = $2`, [filename, targetUserId]);
-
-    for (let index = 0; index < chunks.length; index++) {
-      const chunkStr = chunks[index];
-      const embeddingVec = await generateEmbedding(chunkStr, apiKey);
-      const vectorVal = JSON.stringify(embeddingVec);
-
-      const result = await pool.query(
-        `INSERT INTO documents (user_id, doc_type, filename, chunk_text, chunk_index, embedding) 
-         VALUES ($1, $2, $3, $4, $5, $6) 
-         RETURNING id, doc_type, filename, chunk_index`,
-        [targetUserId, docType || 'resume', filename, chunkStr, index + 1, vectorVal]
-      );
-      savedChunks.push(result.rows[0]);
-    }
+    const savedChunks = await indexDocument({
+      userId,
+      docType: docType || 'resume',
+      filename,
+      text: extractedText,
+      apiKey,
+    });
 
     res.status(201).json({
       message: `File "${filename}" successfully parsed and vector-indexed into ${savedChunks.length} chunks`,
@@ -125,16 +122,8 @@ router.post('/upload-file', upload.single('file'), async (req, res) => {
 router.get('/', async (req, res) => {
   const { userId } = req.query;
   try {
-    const result = await pool.query(
-      `SELECT filename, doc_type, COUNT(*) as chunk_count, MAX(id::text) as last_id
-       FROM documents 
-       WHERE user_id = $1 OR user_id = '00000000-0000-0000-0000-000000000000' OR user_id = '00000000-0000-0000-0000-000000000000'
-       GROUP BY filename, doc_type
-       ORDER BY last_id DESC`,
-      [userId || '00000000-0000-0000-0000-000000000000']
-    );
-
-    res.json({ documents: result.rows });
+    const documents = await docsListGrouped(userId || DEMO_USER_ID);
+    res.json({ documents });
   } catch (err) {
     console.error('Fetch documents error:', err.message);
     res.status(500).json({ error: 'Failed to fetch candidate documents' });
@@ -147,13 +136,8 @@ router.delete('/:filename', async (req, res) => {
   const { userId } = req.query;
 
   try {
-    const result = await pool.query(
-      `DELETE FROM documents 
-       WHERE filename = $1 AND (user_id = $2 OR user_id = '00000000-0000-0000-0000-000000000000' OR user_id = '00000000-0000-0000-0000-000000000000')`,
-      [filename, userId || '00000000-0000-0000-0000-000000000000']
-    );
-
-    res.json({ message: `Successfully deleted document "${filename}"`, deletedCount: result.rowCount });
+    const deletedCount = await docsDeleteByFilename(userId || DEMO_USER_ID, filename);
+    res.json({ message: `Successfully deleted document "${filename}"`, deletedCount });
   } catch (err) {
     console.error('Delete document error:', err.message);
     res.status(500).json({ error: 'Failed to delete document' });
@@ -161,4 +145,3 @@ router.delete('/:filename', async (req, res) => {
 });
 
 export default router;
-

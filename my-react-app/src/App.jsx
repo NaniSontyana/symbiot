@@ -5,9 +5,11 @@ import CopilotAnswerCard from './components/CopilotAnswerCard';
 import CandidateContextModal from './components/CandidateContextModal';
 import DesktopScreenModal from './components/DesktopScreenModal';
 import FloatingPoint from './components/FloatingPoint';
+import AuthScreen from './components/AuthScreen';
 import { useAudioStreamer } from './hooks/useAudioStreamer';
 import { createTurnManager } from './lib/turnManager';
 import { DEFAULT_MODEL } from './lib/models';
+import { copilotWsUrl, asrWsUrl } from './lib/api';
 import { Send, Play, HelpCircle, RefreshCw, Sparkles } from 'lucide-react';
 
 const SIMILAR_QUESTION_BANKS = {
@@ -85,13 +87,34 @@ function getTopicSimilarQuestions(activeQ = '', context = '') {
   return uniqueQuestions.slice(0, 4);
 }
 
+const DEMO_USER = {
+  id: '00000000-0000-0000-0000-000000000000',
+  username: 'demo_candidate',
+  email: 'candidate@symbiot.ai',
+  demo: true,
+};
+
+function loadStoredUser() {
+  try {
+    const raw = localStorage.getItem('symbiot_user');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && parsed.id ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
+  const [currentUser, setCurrentUser] = useState(loadStoredUser);
+  const [authDismissed, setAuthDismissed] = useState(
+    () => !!loadStoredUser() || localStorage.getItem('symbiot_auth_dismissed') === '1'
+  );
   const [isConnected, setIsConnected] = useState(false);
   const [stealthMode, setStealthMode] = useState(true);
   const [clickThrough, setClickThrough] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [opacity, setOpacity] = useState(0.85);
-  const [bgMode, setBgMode] = useState('transparent');
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isScreenModalOpen, setIsScreenModalOpen] = useState(false);
@@ -162,29 +185,53 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [latencyMs, setLatencyMs] = useState(180);
   const [conversationHistory, setConversationHistory] = useState([]);
-  const [similarQuestions, setSimilarQuestions] = useState(SIMILAR_QUESTION_BANKS.general);
+  // Rotating question-bank seed: each "Generate Similar" press cycles the bank
+  // merged with the topic-tailored suggestions derived from the active question.
+  const [questionBankSeed, setQuestionBankSeed] = useState(0);
 
-  // Automatically update similar question recommendations when active question or context changes
-  useEffect(() => {
-    const updated = getTopicSimilarQuestions(activeQuestion, candidateContext);
-    setSimilarQuestions(updated);
-  }, [activeQuestion, candidateContext]);
+  const similarQuestions = React.useMemo(() => {
+    const tailored = getTopicSimilarQuestions(activeQuestion, candidateContext);
+    const categories = Object.keys(SIMILAR_QUESTION_BANKS);
+    const bank = SIMILAR_QUESTION_BANKS[categories[questionBankSeed % categories.length]];
+    return Array.from(new Set([...tailored, ...bank])).slice(0, 4);
+  }, [activeQuestion, candidateContext, questionBankSeed]);
 
   const handleRefreshSimilarQuestions = () => {
-    const categories = Object.keys(SIMILAR_QUESTION_BANKS);
-    const randomCategory = categories[Math.floor(Math.random() * categories.length)];
-    setSimilarQuestions(SIMILAR_QUESTION_BANKS[randomCategory]);
+    setQuestionBankSeed((seed) => seed + 1);
+  };
+
+  // ---------------------------------------------------------------- auth
+  const handleAuthSuccess = ({ user, token }) => {
+    setCurrentUser(user);
+    setAuthDismissed(true);
+    localStorage.setItem('symbiot_user', JSON.stringify(user));
+    if (token) localStorage.setItem('symbiot_token', token);
+    localStorage.removeItem('symbiot_auth_dismissed');
+  };
+
+  const handleContinueAsDemo = () => {
+    setCurrentUser(DEMO_USER);
+    setAuthDismissed(true);
+    localStorage.setItem('symbiot_auth_dismissed', '1');
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setAuthDismissed(false);
+    localStorage.removeItem('symbiot_user');
+    localStorage.removeItem('symbiot_token');
+    localStorage.removeItem('symbiot_auth_dismissed');
   };
 
   const socketRef = useRef(null);
 
   // Notify Electron of window resize when collapsing/expanding
-  const handleToggleCollapse = (collapsedState) => {
+  const handleToggleCollapse = useCallback((collapsedState) => {
     setIsCollapsed(collapsedState);
     if (window.electronAPI && window.electronAPI.resizeWindow) {
       window.electronAPI.resizeWindow({ isCollapsed: collapsedState, stealthMode });
     }
-  };
+  }, [stealthMode]);
 
   // Close or exit the application
   const handleExitApp = () => {
@@ -231,7 +278,7 @@ export default function App() {
     const payload = JSON.stringify({
       type: 'transcript_question',
       questionText: query,
-      userId: '00000000-0000-0000-0000-000000000000',
+      userId: (currentUser && currentUser.id) || DEMO_USER.id,
       apiKey: apiKey || null,
       resumeContext: candidateContext || null,
       selectedModel: selectedModel || DEFAULT_MODEL,
@@ -242,11 +289,11 @@ export default function App() {
       socketRef.current.send(payload);
       console.log(`[Copilot WS] Sent question to Gateway: "${query}"`);
     } else {
-      console.warn('[Copilot WS] WebSocket on port 5000 not connected yet');
+      console.warn('[Copilot WS] Copilot gateway WebSocket not connected yet');
     }
 
     setCustomQuestion('');
-  }, [customQuestion, apiKey, candidateContext, selectedModel, isCollapsed]);
+  }, [customQuestion, apiKey, candidateContext, selectedModel, isCollapsed, currentUser, handleToggleCollapse]);
 
   const handleAskQuestionRef = useRef(handleAskQuestion);
   useEffect(() => {
@@ -254,7 +301,7 @@ export default function App() {
   }, [handleAskQuestion]);
 
   // Intelligent Interview Question Detector Filter for ASR Audio Stream
-  const isInterviewQuestion = (text, speaker) => {
+  const isInterviewQuestion = (text) => {
     if (!text) return false;
     const cleanText = text.trim();
     const lower = cleanText.toLowerCase();
@@ -402,7 +449,7 @@ export default function App() {
     const sanitized = sanitizeQuestionText(text);
     if (!sanitized) return;
 
-    if (!isInterviewQuestion(sanitized, 'interviewer')) {
+    if (!isInterviewQuestion(sanitized)) {
       console.log(`[Turn Manager] Interviewer turn is not a question, skipped: "${sanitized}"`);
       return;
     }
@@ -453,7 +500,7 @@ export default function App() {
     selectedMicId,
     switchMicrophone
   } = useAudioStreamer(
-    'ws://localhost:8000/ws/transcribe',
+    asrWsUrl(),
     (detectedText, speaker, engine, isFinal = true) => {
       if (isFinal && detectedText) {
         console.log(`[ASR Speech Output] [${speaker}]: "${detectedText}"`);
@@ -469,7 +516,7 @@ export default function App() {
     switchSpeakerRef.current = switchSpeaker;
   }, [switchSpeaker]);
 
-  // Auto-start microphone streaming on application load
+  // Auto-start microphone streaming on application load (run once on mount)
   useEffect(() => {
     const timer = setTimeout(() => {
       if (!isStreaming) {
@@ -477,6 +524,7 @@ export default function App() {
       }
     }, 600);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleToggleMic = () => {
@@ -518,11 +566,11 @@ export default function App() {
 
     const connectWs = () => {
       try {
-        const ws = new WebSocket('ws://localhost:5000/ws/copilot');
+        const ws = new WebSocket(copilotWsUrl());
         socketRef.current = ws;
 
         ws.onopen = () => {
-          console.log('[Copilot WS] Connected to Gateway port 5000');
+          console.log('[Copilot WS] Connected to Backend Gateway');
           setIsConnected(true);
         };
 
@@ -563,10 +611,10 @@ export default function App() {
           timerId = setTimeout(connectWs, 3000);
         };
 
-        ws.onerror = (err) => {
+        ws.onerror = () => {
           ws.close();
         };
-      } catch (err) {
+      } catch {
         setIsConnected(false);
         timerId = setTimeout(connectWs, 3000);
       }
@@ -607,6 +655,11 @@ export default function App() {
         padding: isCollapsed ? '8px' : '0'
       }}
     >
+      {/* First-run authentication gate (sign in or continue as demo) */}
+      {!authDismissed && (
+        <AuthScreen onAuthSuccess={handleAuthSuccess} onContinueAsDemo={handleContinueAsDemo} />
+      )}
+
       {/* Collapsed View: Floating Point Pill Badge */}
       {isCollapsed ? (
         <FloatingPoint
@@ -632,6 +685,8 @@ export default function App() {
         >
           {/* 1. FIRST SECTION: MAIN HEADER */}
           <Header
+            currentUser={currentUser}
+            onLogout={handleLogout}
             isConnected={isConnected}
             stealthMode={stealthMode}
             setStealthMode={setStealthMode}
@@ -667,8 +722,6 @@ export default function App() {
               setSelectedModel={setSelectedModel}
               opacity={opacity}
               setOpacity={setOpacity}
-              bgMode={bgMode}
-              setBgMode={setBgMode}
               activeSpeaker={activeSpeaker}
               onSwitchSpeaker={switchSpeaker}
               isSystemAudioActive={isSystemAudioActive}
@@ -766,6 +819,7 @@ export default function App() {
             isOpen={isModalOpen}
             onClose={() => setIsModalOpen(false)}
             currentApiKey={apiKey}
+            currentUser={currentUser}
             onSaveContext={handleSaveSettings}
           />
 

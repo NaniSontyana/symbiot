@@ -77,6 +77,9 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
   const mediaStreamRef = useRef(null);
   const processorRef = useRef(null);
   const recognitionRef = useRef(null);
+  // Holds live Web Audio nodes so the garbage collector never evicts them mid-stream
+  const audioGraphHoldsRef = useRef({});
+  const connectAsrSocketRef = useRef(null);
 
   const systemStreamRef = useRef(null);
   const systemAudioCtxRef = useRef(null);
@@ -190,7 +193,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
         setDiarStatus(null);
         lastMicChannelRef.current = null; // fresh connection, fresh per-channel state
         reconnectTimerRef.current = setTimeout(() => {
-          connectAsrSocket();
+          if (connectAsrSocketRef.current) connectAsrSocketRef.current();
         }, 2000);
       };
 
@@ -200,10 +203,14 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
     } catch (e) {
       console.warn('[ASR Streamer] Could not connect to ASR WS, retrying in 2s:', e);
       reconnectTimerRef.current = setTimeout(() => {
-        connectAsrSocket();
+        if (connectAsrSocketRef.current) connectAsrSocketRef.current();
       }, 2000);
     }
   }, [asrWsUrl]);
+
+  useEffect(() => {
+    connectAsrSocketRef.current = connectAsrSocket;
+  }, [connectAsrSocket]);
 
   useEffect(() => {
     connectAsrSocket();
@@ -233,7 +240,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
 
     try {
       if (recognitionRef.current) {
-        try { recognitionRef.current.stop(); } catch (e) {}
+        try { recognitionRef.current.stop(); } catch { /* ignore */ }
       }
 
       const recognition = new SpeechRecognition();
@@ -269,7 +276,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
 
       recognition.onend = () => {
         if (isStreamingRef.current) {
-          try { recognition.start(); } catch (err) {}
+          try { recognition.start(); } catch { /* ignore */ }
         }
       };
 
@@ -298,11 +305,12 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
       if (preferredMic && preferredMic.deviceId && !selectedMicId) {
         setSelectedMicId(preferredMic.deviceId);
       }
-    } catch (e) {}
+    } catch { /* ignore */ }
   }, [selectedMicId]);
 
   useEffect(() => {
-    loadAudioDevices();
+    // Defer to a microtask so the device list does not synchronously re-render inside the effect body.
+    Promise.resolve().then(loadAudioDevices);
   }, [loadAudioDevices]);
 
   // Start real-time audio streaming from user microphone
@@ -368,7 +376,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
       if (audioCtx.state === 'suspended') {
         try {
           await audioCtx.resume();
-        } catch (e) {}
+        } catch { /* ignore */ }
       }
 
       const resumeAudio = async () => {
@@ -376,7 +384,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
           try {
             await audioCtx.resume();
             console.log('[ASR Streamer] AudioContext resumed successfully (state: ' + audioCtx.state + ')');
-          } catch (e) {}
+          } catch { /* ignore */ }
         }
       };
 
@@ -421,19 +429,15 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
         };
       });
 
-      // Global window references to prevent V8 Garbage Collector from evicting active Web Audio nodes
-      window._symbiotAudioCtx = audioCtx;
-      window._symbiotStream = stream;
-      window._symbiotSource = source;
-      window._symbiotInputGain = inputGain;
-      window._symbiotMuteGain = muteGain;
+      // Hold references to the live audio graph so V8 never GC-evicts active Web Audio nodes
+      audioGraphHoldsRef.current = { audioCtx, stream, source, inputGain, muteGain };
 
       // Try AudioWorklet first for glitch-free main-thread decoupled audio streaming
       try {
         await audioCtx.audioWorklet.addModule('/pcm-processor.js');
         const workletNode = new AudioWorkletNode(audioCtx, 'pcm-processor');
         processorRef.current = workletNode;
-        window._symbiotProcessor = workletNode;
+        audioGraphHoldsRef.current.processor = workletNode;
 
         workletNode.port.onmessage = (event) => {
           if (audioCtx.state === 'suspended') {
@@ -459,7 +463,7 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
         console.warn('[ASR Streamer] AudioWorklet fallback to ScriptProcessor:', workletErr.message);
         const processor = audioCtx.createScriptProcessor(4096, 1, 1);
         processorRef.current = processor;
-        window._symbiotProcessor = processor;
+        audioGraphHoldsRef.current.processor = processor;
 
         processor.onaudioprocess = (e) => {
           if (audioCtx.state === 'suspended') {
@@ -618,15 +622,15 @@ export function useAudioStreamer(asrWsUrl, onTranscriptReceived) {
   // Stop audio streaming (async to properly await AudioContext.close())
   const stopStreaming = async () => {
     if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch (e) {}
+      try { recognitionRef.current.stop(); } catch { /* ignore */ }
       recognitionRef.current = null;
     }
     if (processorRef.current) {
-      try { processorRef.current.disconnect(); } catch (e) {}
+      try { processorRef.current.disconnect(); } catch { /* ignore */ }
       processorRef.current = null;
     }
     if (audioCtxRef.current) {
-      try { await audioCtxRef.current.close(); } catch (e) {}
+      try { await audioCtxRef.current.close(); } catch { /* ignore */ }
       audioCtxRef.current = null;
     }
     if (mediaStreamRef.current) {
