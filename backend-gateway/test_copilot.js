@@ -8,7 +8,7 @@ ws.on('open', () => {
     type: 'transcript_question',
     questionText: 'What is the difference between WebSockets and HTTP long-polling?',
     userId: '00000000-0000-0000-0000-000000000000',
-    selectedModel: 'gemini-1.5-flash'
+    selectedModel: 'gemini-3.5-flash-lite'
   }));
 });
 

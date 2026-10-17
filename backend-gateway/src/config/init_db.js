@@ -102,13 +102,15 @@ export async function initDatabase() {
     await dbPool.query(executableSql);
     console.log(`✅ All tables (users, sessions, documents, transcripts) created successfully!`);
 
-    // Step 3: Insert default demo user
+    // Step 3: Insert default demo user (email candidate@symbiot.ai, password demo1234)
+    const bcrypt = (await import('bcryptjs')).default;
     const demoUserId = '00000000-0000-0000-0000-000000000000';
+    const demoPasswordHash = bcrypt.hashSync('demo1234', 10);
     await dbPool.query(
       `INSERT INTO users (id, username, email, password_hash)
-       VALUES ($1, 'demo_candidate', 'candidate@symbiot.ai', 'hashed_pass_2026')
+       VALUES ($1, 'demo_candidate', 'candidate@symbiot.ai', $2)
        ON CONFLICT (id) DO NOTHING`,
-      [demoUserId]
+      [demoUserId, demoPasswordHash]
     );
 
     console.log('🎉 Database initialization complete and ready!');

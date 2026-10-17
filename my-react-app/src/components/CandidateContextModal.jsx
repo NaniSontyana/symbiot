@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { X, FileText, Upload, Save, CheckCircle, Key, Loader, Briefcase, Sparkles } from 'lucide-react';
+import { apiUrl } from '../lib/api';
 
-export default function CandidateContextModal({ isOpen, onClose, onSaveContext, currentApiKey }) {
+export default function CandidateContextModal({ isOpen, onClose, onSaveContext, currentApiKey, currentUser }) {
+  const userId = (currentUser && currentUser.id) || '00000000-0000-0000-0000-000000000000';
   const [apiKey, setApiKey] = useState(currentApiKey || '');
   const [targetRole, setTargetRole] = useState(localStorage.getItem('symbiot_target_role') || 'Senior Full Stack Engineer');
   const [jobDescriptionText, setJobDescriptionText] = useState(
@@ -29,13 +31,13 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
     const formData = new FormData();
     formData.append('file', file);
     formData.append('docType', 'resume');
-    formData.append('userId', '00000000-0000-0000-0000-000000000000');
+    formData.append('userId', userId);
     if (apiKey) {
       formData.append('apiKey', apiKey);
     }
 
     try {
-      const response = await fetch('http://localhost:5000/api/documents/upload-file', {
+      const response = await fetch(apiUrl('/api/documents/upload-file'), {
         method: 'POST',
         body: formData,
       });
@@ -50,8 +52,8 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
         setStatusMessage(errData.error || 'Failed to upload document file');
       }
     } catch (err) {
-      setUploadStatus('success');
-      setStatusMessage(`Indexed "${file.name}" into candidate vector memory.`);
+      setUploadStatus('error');
+      setStatusMessage(`Could not reach the document service: ${err.message}`);
     }
   };
 
@@ -90,11 +92,11 @@ export default function CandidateContextModal({ isOpen, onClose, onSaveContext, 
     // Save text-format Job Description to vector backend
     if (jobDescriptionText) {
       try {
-        await fetch('http://localhost:5000/api/documents/upload-text', {
+        await fetch(apiUrl('/api/documents/upload-text'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            userId: '00000000-0000-0000-0000-000000000000',
+            userId,
             docType: 'job_description',
             chunkText: jobDescriptionText,
             apiKey

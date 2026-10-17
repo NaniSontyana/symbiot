@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Monitor, X, Check, RefreshCw, Layers, Volume2, Shield } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Monitor, X, Check, RefreshCw, Volume2 } from 'lucide-react';
 
 export default function DesktopScreenModal({
   isOpen,
@@ -14,7 +14,7 @@ export default function DesktopScreenModal({
   const [loading, setLoading] = useState(false);
   const [selectedSourceId, setSelectedSourceId] = useState(null);
 
-  const fetchDesktopSources = async () => {
+  const fetchDesktopSources = useCallback(async () => {
     setLoading(true);
     try {
       if (window.electronAPI && window.electronAPI.getDesktopSources) {
@@ -34,13 +34,14 @@ export default function DesktopScreenModal({
     } finally {
       setLoading(false);
     }
-  };
+  }, [displaysList]);
 
   useEffect(() => {
     if (isOpen) {
-      fetchDesktopSources();
+      // Defer to a microtask so the refresh does not synchronously re-render inside the effect body.
+      Promise.resolve().then(fetchDesktopSources);
     }
-  }, [isOpen, displaysList]);
+  }, [isOpen, fetchDesktopSources]);
 
   if (!isOpen) return null;
 

@@ -46,9 +46,19 @@ export function endsWithDanglingWord(text) {
   return DANGLING_ENDINGS.includes(last) || DANGLING_ENDINGS.includes(lastTwo);
 }
 
+/**
+ * A finished utterance ending in a question mark is an unambiguous completion
+ * signal — the interviewer is not about to continue, so the turn can be
+ * flushed almost immediately instead of waiting for the full pause gap.
+ */
+export function endsWithQuestionMark(text) {
+  return /\?\s*$/.test(text || '');
+}
+
 export function createTurnManager({
   onInterviewerTurn,
-  turnGapMs = 900,
+  turnGapMs = 650,           // pause that closes an interviewer turn (was 900)
+  questionFastFlushMs = 200, // fast path when the utterance ended with '?'
   danglingExtraMs = 1200,
   partialStallMs = 4000,
   maxTurnMs = 60000,
@@ -116,6 +126,14 @@ export function createTurnManager({
     if (segments.length === 0) return;
     if (now() - turnStartedAt >= maxTurnMs) {
       flush('max_length');
+      return;
+    }
+    // Latency fast path: a completed question mark means the interviewer finished
+    // asking — flush after a very short settle window instead of the full pause
+    // gap. If the interviewer immediately adds a follow-up utterance, the new
+    // final replaces this timer and the segments merge as usual.
+    if (endsWithQuestionMark(segments[segments.length - 1])) {
+      schedule(questionFastFlushMs, () => flush('question_complete'));
       return;
     }
     schedule(turnGapMs, onPause);

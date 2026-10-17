@@ -3,7 +3,7 @@
  * Runs directly on Web Audio rendering thread to avoid main UI thread latency/jank.
  */
 class PcmProcessor extends AudioWorkletProcessor {
-  constructor(options) {
+  constructor() {
     super();
     this.targetSampleRate = 16000;
     this.bufferSize = 4096;
@@ -17,7 +17,7 @@ class PcmProcessor extends AudioWorkletProcessor {
     };
   }
 
-  process(inputs, outputs, parameters) {
+  process(inputs) {
     const input = inputs[0];
     if (!input || input.length === 0) return true;
 

@@ -6,10 +6,18 @@ import logging
 import threading
 from contextlib import asynccontextmanager
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()  # picks up asr-service/.env when present (optional)
+except ImportError:
+    pass
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from services.echo_guard import EchoGuard
+from services.mock_engine import MockParakeetEngine
 from services.parakeet_eou_engine import DEFAULT_MODEL_NAME, ParakeetEOUEngine
 from services.sortformer_diar_engine import DEFAULT_DIAR_MODEL, SortformerDiarEngine
 from services.speaker_attribution import DiarizationConfig, DiarizedTranscriber, SpeakerRoles
@@ -40,7 +48,17 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def build_engine() -> ParakeetEOUEngine:
+def use_mock_engine() -> bool:
+    return os.getenv("ASR_ENGINE", "parakeet").strip().lower() == "mock" or os.getenv("ASR_MOCK") == "1"
+
+
+def build_engine():
+    if use_mock_engine():
+        # Scripted interviewer simulation: no GPU models needed, identical streaming interface.
+        return MockParakeetEngine(
+            model_name=os.getenv("ASR_MODEL", "mock/parakeet-simulator"),
+            device=os.getenv("ASR_DEVICE") or "cpu",
+        )
     return ParakeetEOUEngine(
         model_name=os.getenv("ASR_MODEL", DEFAULT_MODEL_NAME),
         device=os.getenv("ASR_DEVICE") or None,  # default: cuda if available, else cpu
@@ -51,6 +69,11 @@ def build_transcriber_config() -> TranscriberConfig:
     return TranscriberConfig(
         input_gain=_env_float("ASR_INPUT_GAIN", 1.0),
         emit_partials=os.getenv("ASR_EMIT_PARTIALS", "1") != "0",
+        # Fallback when the model misses its EOU token: finalize an utterance
+        # after this many silent 80 ms chunks (default 20 ~= 1.6 s). Lower it
+        # (e.g. 10 ~= 0.8 s) for snappier question detection at the cost of
+        # occasionally splitting slow speech.
+        force_final_silence_chunks=_env_int("ASR_FORCE_FINAL_SILENCE_CHUNKS", 20),
     )
 
 
@@ -61,7 +84,7 @@ def build_echo_guard():
 
 
 def build_diar_engine():
-    if os.getenv("ASR_DIARIZATION", "1") == "0":
+    if os.getenv("ASR_DIARIZATION", "0" if use_mock_engine() else "1") == "0":
         return None
     return SortformerDiarEngine(
         model_name=os.getenv("ASR_DIAR_MODEL", DEFAULT_DIAR_MODEL),

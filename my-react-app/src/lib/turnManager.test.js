@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTurnManager, isBackchannel, endsWithDanglingWord } from './turnManager.js';
+import { createTurnManager, isBackchannel, endsWithDanglingWord, endsWithQuestionMark } from './turnManager.js';
 
 function fakeClock() {
   let t = 0;
@@ -151,10 +151,42 @@ test('flushNow and reset', () => {
   assert.equal(turns.length, 1);
 });
 
+test('utterance ending with a question mark flushes on the fast path', () => {
+  const { clock, turns, I } = setup({ turnGapMs: 650, questionFastFlushMs: 200 });
+  I('how would you shard a postgres table?');
+  clock.advance(199);
+  assert.equal(turns.length, 0);
+  clock.advance(1);
+  assert.deepEqual(turns, [{ text: 'how would you shard a postgres table?', reason: 'question_complete' }]);
+});
+
+test('fast path still merges an immediate follow-up utterance', () => {
+  const { clock, turns, I } = setup({ turnGapMs: 650, questionFastFlushMs: 200 });
+  I('what is event sourcing?');
+  clock.advance(100); // interviewer immediately continues
+  I('and when is it a bad idea?');
+  clock.advance(200);
+  assert.deepEqual(turns.map((t) => t.text), ['what is event sourcing? and when is it a bad idea?']);
+  assert.equal(turns[0].reason, 'question_complete');
+});
+
+test('non-question utterances still wait for the pause gap', () => {
+  const { clock, turns, I } = setup({ turnGapMs: 650 });
+  I('walk me through your resume');
+  clock.advance(649);
+  assert.equal(turns.length, 0);
+  clock.advance(1);
+  assert.equal(turns.length, 1);
+  assert.equal(turns[0].reason, 'pause');
+});
+
 test('helpers', () => {
   assert.ok(isBackchannel('Yeah, okay.'));
   assert.ok(!isBackchannel('yeah so i would use redis'));
   assert.ok(endsWithDanglingWord('difference between tcp and'));
   assert.ok(endsWithDanglingWord('what kind of'));
   assert.ok(!endsWithDanglingWord('what is udp'));
+  assert.ok(endsWithQuestionMark('how would you scale it?'));
+  assert.ok(endsWithQuestionMark('does it work?  '));
+  assert.ok(!endsWithQuestionMark('walk me through it'));
 });

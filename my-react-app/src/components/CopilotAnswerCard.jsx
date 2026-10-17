@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { DEFAULT_MODEL } from '../lib/models';
-import { Zap, Copy, Check, Sparkles, MessageSquare, Trash2, Bot, User } from 'lucide-react';
+import { Zap, Copy, Check, Sparkles, Trash2, Bot, User } from 'lucide-react';
 
 function renderFormattedAnswer(text, isGenerating) {
   if (!text) return null;
@@ -219,9 +219,21 @@ function CopilotAnswerCard({
                     </span>
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span style={{ fontSize: '0.64rem', background: 'rgba(255, 255, 255, 0.12)', border: '1px solid rgba(255, 255, 255, 0.2)', color: '#ffffff', padding: '1px 5px', borderRadius: '8px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                        <Zap size={9} color="#ffffff" /> {item.latencyMs || latencyMs || 180}ms
-                      </span>
+                      {(() => {
+                        const ttft = item.latencyMs ?? latencyMs;
+                        const total = item.totalMs;
+                        if (ttft == null && total == null) return null;
+                        return (
+                          <span
+                            title={total != null ? `First token in ${ttft ?? '—'}ms · complete answer in ${(total / 1000).toFixed(2)}s` : `First token in ${ttft}ms`}
+                            style={{ fontSize: '0.64rem', background: 'rgba(255, 255, 255, 0.12)', border: '1px solid rgba(255, 255, 255, 0.2)', color: '#ffffff', padding: '1px 5px', borderRadius: '8px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '3px' }}
+                          >
+                            <Zap size={9} color="#ffffff" />
+                            {ttft != null && <span>{ttft}ms</span>}
+                            {total != null && <span style={{ opacity: 0.75 }}>· {(total / 1000).toFixed(1)}s</span>}
+                          </span>
+                        );
+                      })()}
                       <button
                         onClick={() => handleCopyText(answerContent, item.id || idx)}
                         className="btn-secondary"

@@ -12,6 +12,7 @@ try {
 } catch (e) {}
 
 let mainWindow;
+let isClickThrough = false;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -83,8 +84,6 @@ app.whenReady().then(() => {
       callback({});
     }
   });
-
-  let isClickThrough = false;
 
   // Global Keyboard Shortcuts
   globalShortcut.register('CommandOrControl+Alt+S', () => {
@@ -211,6 +210,15 @@ ipcMain.on('toggle-click-through', (event, ignore) => {
     } else {
       mainWindow.setIgnoreMouseEvents(false);
     }
+  }
+});
+
+ipcMain.on('toggle-stealth-mode', () => {
+  if (mainWindow) {
+    const isStealth = mainWindow.getBounds().width < 800;
+    const targetStealth = !isStealth;
+    mainWindow.setSize(targetStealth ? 680 : 1100, targetStealth ? 500 : 750);
+    mainWindow.webContents.send('hotkey-toggle-stealth', targetStealth);
   }
 });
 
